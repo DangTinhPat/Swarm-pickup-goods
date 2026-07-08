@@ -32,6 +32,7 @@
 #include <argos3/plugins/robots/generic/control_interface/ci_range_and_bearing_sensor.h>
 #include <argos3/plugins/robots/foot-bot/control_interface/ci_footbot_proximity_sensor.h>
 #include <argos3/plugins/robots/generic/control_interface/ci_positioning_sensor.h>
+#include <argos3/plugins/robots/generic/control_interface/ci_battery_sensor.h>
 #include <argos3/core/utility/math/vector2.h>
 #include <argos3/core/utility/math/rng.h>
 #include <vector>
@@ -43,9 +44,11 @@ class CFootBotWarehouse : public CCI_Controller {
 public:
 
    enum EState {
-      STATE_IDLE = 0,   /* no work: loiter at the depot */
+      STATE_IDLE = 0,   /* no work: park (and top up) at the dock */
       STATE_TO_BELT,    /* committed to a belt, driving to its bin */
-      STATE_DELIVER     /* carrying a parcel to its address zone */
+      STATE_DELIVER,    /* carrying a parcel to its address zone */
+      STATE_CHARGE,     /* battery low: claim a charging bay until recharged */
+      STATE_DEAD        /* battery empty: bricked in place */
    };
 
    static const UInt32 NUM_BELTS = 3;
@@ -93,6 +96,14 @@ public:
    void  Deliver();
    /* Facility-wide broadcast of the three belt queue lengths (WMS feed) */
    void  SetBeltQueues(const UInt8* pun_queues);
+   /* Energy status (also read by the QT user functions for the HUD) */
+   bool  IsCharging() const { return m_eState == STATE_CHARGE; }
+   bool  IsDead() const { return m_eState == STATE_DEAD; }
+   /* Eligible for a parcel handover at the bin? Uses the lower
+    * keep-working floor, not the new-job bar: a robot that committed
+    * legitimately and dipped a little en route may still take its
+    * parcel instead of camping at the bin. */
+   bool  WantsWork() const;
 
 private:
 
@@ -112,6 +123,7 @@ private:
    CCI_RangeAndBearingSensor*        m_pcRABSens;
    CCI_FootBotProximitySensor*       m_pcProximity;
    CCI_PositioningSensor*            m_pcPosition;
+   CCI_BatterySensor*                m_pcBattery;
    CRandom::CRNG*                    m_pcRNG;
 
    SWheelTurningParams m_sWheelTurningParams;
@@ -120,13 +132,35 @@ private:
    /* Facility layout (from XML; a real AMR has the facility map) */
    CVector2 m_cBelt[NUM_BELTS];   /* bin pickup points */
    CVector2 m_cAddr[NUM_ADDRS];   /* address zone centers */
-   /* Docking grid: idle robots park in neat rows */
+   /* Docking/charging bays: two rows (left & right side of the floor) */
    std::vector<CVector2> m_cDockSlots;
-   CVector2 m_cDockCenter;
+   /* Distance to the nearest bay — used by the energy planner */
+   Real NearestDockDist() const;
+   /* Structural pillars (known from the facility map). The proximity
+    * sensor only sees ~10 cm — far too late to route around a column at
+    * speed — so navigation-scale avoidance uses the map instead. */
+   std::vector<CVector2> m_cPillars;
+   Real m_fPillarRadius;
+   Real m_fPillarRange;
+   CVector2 PillarField();
 
    /* Motion parameters */
    Real m_fObstacleGain;
    Real m_fHardAvoidThreshold;
+
+   /* Predictive energy management: the robot knows its own consumption
+    * model (from the fleet spec in XML) and goes charging exactly when
+    * the remaining charge approaches what it needs to reach a charging
+    * bay — with a safety factor — instead of a blind threshold. */
+   Real m_fDrainPerMeter;   /* charge fraction spent per meter driven */
+   Real m_fDrainPerTick;    /* charge fraction spent per tick (idle) */
+   Real m_fSafetyFactor;    /* multiplier on the predicted need */
+   Real m_fReserveCharge;   /* untouchable emergency reserve */
+   Real m_fResumeCharge;    /* leave the charger at this level */
+   Real m_fMinWorkCharge;   /* minimum charge to accept a NEW job */
+   Real m_fHardChargeThreshold; /* below this, go charge no matter what */
+   Real m_fCharge;          /* latest battery reading, 0..1 */
+   Real EnergyFor(Real f_distance) const;
 
    /* Pose */
    CVector2 m_cPos;
@@ -149,6 +183,11 @@ private:
    std::vector<SNeighbor> m_tNeighbors;
    /* Right-of-way rank: loaded > fetching > idle */
    static UInt8 PriorityOf(UInt8 un_state);
+
+   /* Sticky avoidance turn direction: chosen when an obstacle first
+    * triggers the hard-avoid reflex and kept until it clears, so a
+    * dead-ahead pillar cannot make the robot dither left-right forever */
+   SInt8 m_nAvoidSign;   /* 0 = free, +1 turn left, -1 turn right */
 
    /* Docking */
    SInt8 m_nDockSlot;                    /* my claimed slot, -1 = none */

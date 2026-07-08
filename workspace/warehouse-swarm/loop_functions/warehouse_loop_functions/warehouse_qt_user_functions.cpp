@@ -3,6 +3,7 @@
 #include <controllers/footbot_warehouse/footbot_warehouse.h>
 #include <argos3/core/simulator/simulator.h>
 #include <argos3/core/simulator/entity/controllable_entity.h>
+#include <argos3/plugins/simulator/entities/battery_equipped_entity.h>
 
 /****************************************/
 /****************************************/
@@ -29,6 +30,30 @@ void CWarehouseQTUserFunctions::Draw(CFootBotEntity& c_entity) {
          CVector3(0.12, 0.12, 0.1),
          CWarehouseLoopFunctions::AddressColor(cController.GetCarriedAddress()));
    }
+
+   /* Battery HUD: a bar floating over the robot, kept world-aligned by
+    * counter-rotating the robot's own yaw so it never spins with it */
+   CBatteryEquippedEntity& cBattery = c_entity.GetBatterySensorEquippedEntity();
+   Real fFrac = cBattery.GetAvailableCharge() / cBattery.GetFullCharge();
+   CRadians cYaw, cPitch, cRoll;
+   c_entity.GetEmbodiedEntity().GetOriginAnchor().Orientation
+      .ToEulerAngles(cYaw, cPitch, cRoll);
+   CQuaternion cCounter(-cYaw, CVector3::Z);
+   /* frame/background */
+   DrawBox(CVector3(0.0, 0.0, 0.46), cCounter,
+           CVector3(0.22, 0.05, 0.015), CColor::GRAY20);
+   /* fill, anchored to the bar's left edge (in world frame) */
+   CColor cFillColor;
+   if(cController.IsDead())          cFillColor = CColor::BLACK;
+   else if(cController.IsCharging()) cFillColor = CColor::BLUE;
+   else if(fFrac > 0.5)              cFillColor = CColor::GREEN;
+   else if(fFrac > 0.25)             cFillColor = CColor::ORANGE;
+   else                              cFillColor = CColor::RED;
+   CVector2 cOffset(-0.5 * (1.0 - fFrac) * 0.20, 0.0);
+   cOffset.Rotate(-cYaw);
+   DrawBox(CVector3(cOffset.GetX(), cOffset.GetY(), 0.475), cCounter,
+           CVector3(Max<Real>(0.20 * fFrac, 0.005), 0.04, 0.015),
+           cFillColor);
 }
 
 /****************************************/
@@ -49,22 +74,15 @@ void CWarehouseQTUserFunctions::DrawInWorld() {
             CVector3(0.1, 0.1, 0.1),
             CWarehouseLoopFunctions::AddressColor(cQueue[i]));
       }
-      DrawText(CVector3(cPickup.GetX() + 0.1, cPickup.GetY() + 0.45, 0.3),
-               std::string("Belt ") + std::to_string(b) +
-               std::string(": ") + std::to_string(cQueue.size()),
-               CColor::BLACK);
    }
-   /* Address zone letters */
+   /* Per-zone counter of successfully delivered parcels */
+   const UInt32* punPerAddr = m_cLF.GetDeliveredPerAddr();
    for(UInt32 a = 0; a < CWarehouseLoopFunctions::NUM_ADDRS; ++a) {
       const CVector2& cPos = m_cLF.GetAddrPos(a);
       DrawText(CVector3(cPos.GetX(), cPos.GetY(), 0.25),
-               std::string(1, (char)('A' + a)),
+               std::to_string(punPerAddr[a]),
                CColor::BLACK);
    }
-   /* Delivery counter above the depot */
-   DrawText(CVector3(m_cLF.GetDockCenter().GetX(), m_cLF.GetDockCenter().GetY(), 0.5),
-            std::string("Delivered: ") + std::to_string(m_cLF.GetDelivered()),
-            CColor::BLACK);
 }
 
 /****************************************/

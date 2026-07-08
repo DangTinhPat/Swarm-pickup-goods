@@ -26,6 +26,7 @@
         <footbot_proximity implementation="default" show_rays="false" />
         <positioning implementation="default" />
         <range_and_bearing implementation="medium" medium="rab" show_rays="true" />
+        <battery implementation="default" />
       </sensors>
       <params>
         <wheel_turning hard_turn_angle_threshold="90"
@@ -39,7 +40,15 @@
         <stations belt0="3.0,-2.4" belt1="3.0,0" belt2="3.0,2.4"
                   addr_a="-3.4,-3.2" addr_b="-3.4,-1.6" addr_c="-3.4,0"
                   addr_d="-3.4,1.6" addr_e="-3.4,3.2"
-                  dock_center="0,3.3" dock_rows="5" dock_cols="2" dock_spacing="0.55" />
+                  dock_center="0,0" dock_rows="5" dock_cols="2" dock_spacing_x="0.55" dock_spacing_y="6.9"
+                  pillar0="0,0" pillar1="2,2" pillar2="-2,2"
+                  pillar3="2,-2" pillar4="-2,-2"
+                  pillar_radius="0.075" pillar_range="0.8" />
+        <!-- Predictive energy management. drain_* must match the
+             <battery> discharge model on the foot-bot below. -->
+        <energy drain_per_meter="0.008" drain_per_tick="0.00002"
+                safety_factor="1.6" reserve_charge="0.08"
+                resume_charge="0.42" min_work_charge="0.40" hard_charge_threshold="0.05" />
       </params>
     </footbot_warehouse_controller>
   </controllers>
@@ -56,8 +65,9 @@
     <warehouse belt0="3.0,-2.4" belt1="3.0,0" belt2="3.0,2.4"
                addr_a="-3.4,-3.2" addr_b="-3.4,-1.6" addr_c="-3.4,0"
                addr_d="-3.4,1.6" addr_e="-3.4,3.2"
-               dock_center="0,3.3" dock_rows="5" dock_cols="2" dock_spacing="0.55" zone_half="0.4"
-               spawn_period="12" queue_cap="6" pickup_radius="0.35" />
+               dock_center="0,0" dock_rows="5" dock_cols="2" dock_spacing_x="0.55" dock_spacing_y="6.9" zone_half="0.4"
+               spawn_period="12" queue_cap="6" pickup_radius="0.35"
+               charge_rate="0.004" charge_warmup="50" />
   </loop_functions>
 
   <!-- *********************** -->
@@ -92,15 +102,39 @@
       <body position="3.7,2.4,0" orientation="0,0,0" />
     </box>
 
+    <!-- Structural pillars: one at the center, four around it — the
+         potential field routes robots around them like a real warehouse -->
+    <cylinder id="pillar_center" radius="0.075" height="0.8" movable="false">
+      <body position="0,0,0" orientation="0,0,0" />
+    </cylinder>
+    <cylinder id="pillar_ne" radius="0.075" height="0.8" movable="false">
+      <body position="2,2,0" orientation="0,0,0" />
+    </cylinder>
+    <cylinder id="pillar_nw" radius="0.075" height="0.8" movable="false">
+      <body position="-2,2,0" orientation="0,0,0" />
+    </cylinder>
+    <cylinder id="pillar_se" radius="0.075" height="0.8" movable="false">
+      <body position="2,-2,0" orientation="0,0,0" />
+    </cylinder>
+    <cylinder id="pillar_sw" radius="0.075" height="0.8" movable="false">
+      <body position="-2,-2,0" orientation="0,0,0" />
+    </cylinder>
+
     <!-- 10 robots spawn exactly on the dock slots (grid layout matches
          dock_rows x dock_cols x dock_spacing), already facing the belts -->
     <distribute>
-      <position method="grid" center="0,3.3,0"
-                distances="0.55,0.55,0" layout="5,2,1" />
+      <position method="grid" center="0,0,0"
+                distances="0.55,6.9,0" layout="5,2,1" />
       <orientation method="constant" values="0,0,0" />
       <entity quantity="10" max_trials="100">
         <foot-bot id="fb" rab_range="3" rab_data_size="7">
           <controller config="fwc" />
+          <!-- Battery: drains with distance driven + a small idle drain.
+               Factors must match the controller's <energy> model. -->
+          <battery discharge_model="time_motion"
+                   time_factor="0.00002"
+                   pos_factor="0.008"
+                   orient_factor="0.0005" />
         </foot-bot>
       </entity>
     </distribute>

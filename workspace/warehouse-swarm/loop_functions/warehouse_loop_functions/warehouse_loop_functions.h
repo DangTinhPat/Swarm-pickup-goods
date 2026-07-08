@@ -26,6 +26,8 @@
 #include <argos3/core/utility/math/rng.h>
 #include <vector>
 #include <deque>
+#include <map>
+#include <string>
 
 using namespace argos;
 
@@ -64,18 +66,24 @@ private:
    /* Layout */
    CVector2 m_cBeltPickup[NUM_BELTS];
    CVector2 m_cAddrPos[NUM_ADDRS];
-   /* Docking grid (matches the controller's layout) */
+   /* Docking/charging bays (must match the controller's layout) */
    CVector2 m_cDockCenter;
    std::vector<CVector2> m_cDockSlots;
-   Real     m_fDockSpacing;
-   UInt32   m_unDockRows;
-   UInt32   m_unDockCols;
+   /* Bay status for floor painting: 0 = free/idle, 1 = robot present,
+    * warming up (5 s handshake before power flows), 2 = charging */
+   std::vector<UInt8> m_unSlotStatus;
+   /* Consecutive on-bay ticks per robot (keyed by robot id) */
+   std::map<std::string, UInt32> m_mapWarmup;
    Real     m_fZoneHalf;      /* address zones are squares of this half-size */
 
    /* Parcel flow */
    UInt32 m_unSpawnPeriod;    /* ticks between parcel arrivals */
    UInt32 m_unQueueCap;       /* bin capacity per belt */
    Real   m_fPickupRadius;    /* handover distance at the bin */
+
+   /* Charging: dock slots double as charging bays */
+   Real   m_fChargeRate;      /* charge fraction added per tick on a bay */
+   UInt32 m_unChargeWarmup;   /* ticks on the bay before power flows */
 
    std::deque<UInt8> m_cQueues[NUM_BELTS];
 
@@ -84,6 +92,9 @@ private:
    UInt32 m_unDeliveredPerAddr[NUM_ADDRS];
    UInt32 m_unCollisionTicks;
    Real   m_fMinPairDistance;
+   /* Energy metrics */
+   Real   m_fMinChargeSeen;   /* lowest battery fraction ever observed */
+   UInt32 m_unDeadTicks;      /* robot-ticks spent with an empty battery */
    Real   m_fMinWallClearance;
 };
 
