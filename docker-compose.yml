@@ -1,0 +1,36 @@
+services:
+  argos3:
+    build:
+      context: .
+      args:
+        USER_UID: ${UID:-1000}
+        USER_GID: ${GID:-1000}
+    image: argos3-dev:ubuntu22
+    container_name: argos3
+    stdin_open: true
+    tty: true
+    # host networking makes X11 forwarding trivial on Linux (no port/socket
+    # mapping needed beyond the X11 socket below) and gives native network
+    # performance for swarm-robotics experiments that use TCP/UDP.
+    network_mode: host
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      # GUI on host: share the X11 socket + auth so the container's Qt/
+      # OpenGL visualizer draws on the host screen.
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/home/argos/.Xauthority:ro
+      # Editable source: this is what you open in VS Code on the host.
+      # Holds argos3/ (core), argos3-examples/, and any of your own projects.
+      - ./workspace:/home/argos/workspace
+    devices:
+      # GPU-accelerated OpenGL for the visualizer (falls back to software
+      # rendering automatically if /dev/dri isn't present on the host).
+      - /dev/dri:/dev/dri
+    group_add:
+      # Match the host's video/render GIDs so the container user can open
+      # /dev/dri/* (adjust if `getent group video render` differs on your host).
+      - "44"   # video
+      - "110"  # render
+    working_dir: /home/argos/workspace

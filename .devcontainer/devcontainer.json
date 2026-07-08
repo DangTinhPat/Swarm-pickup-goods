@@ -1,0 +1,17 @@
+{
+    "name": "ARGoS3 (Ubuntu 22.04)",
+    "dockerComposeFile": "../docker-compose.yml",
+    "service": "argos3",
+    "workspaceFolder": "/home/argos/workspace",
+    "remoteUser": "argos",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "twxs.cmake"
+            ]
+        }
+    },
+    "shutdownAction": "stopCompose"
+}

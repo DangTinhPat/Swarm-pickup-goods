@@ -1,0 +1,40 @@
+# ============================================================
+# workspace/argos3/ (ARGoS3 core) ĐƯỢC track trong repo (vendored,
+# xem workspace/argos3/UPSTREAM.txt) để khách clone về là build được
+# ngay bằng Docker, không phụ thuộc mạng/upstream.
+# Chỉ bỏ qua ví dụ chính thức — clone lại từ github.com/ilpincy
+# ============================================================
+workspace/argos3-examples/
+
+# ============================================================
+# Sản phẩm build — sinh lại được bằng cmake + make
+# ============================================================
+build/
+build_*/
+*.o
+*.so
+*.a
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+_deps/
+
+# ============================================================
+# Log & output thí nghiệm
+# ============================================================
+*.log
+nohup.out
+core
+core.*
+
+# ============================================================
+# Editor / IDE / OS
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

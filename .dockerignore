@@ -1,0 +1,7 @@
+# Build context chỉ cần workspace/argos3 (source, ~31MB) cho lệnh COPY
+# trong Dockerfile. Chặn mọi thứ nặng/không cần:
+workspace/argos3/build
+workspace/argos3/build_simulator
+workspace/argos3-examples
+workspace/ball-collector/build
+.git

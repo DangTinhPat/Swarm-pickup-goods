@@ -1,0 +1,140 @@
+<?xml version="1.0" ?>
+<argos-configuration>
+
+  <!-- ************************* -->
+  <!-- * General configuration * -->
+  <!-- ************************* -->
+  <framework>
+    <!-- threads="0" is required: the loop functions call controller
+         methods directly, which is only safe single-threaded -->
+    <system threads="0" />
+    <experiment length="0" ticks_per_second="10" random_seed="0" />
+  </framework>
+
+  <!-- *************** -->
+  <!-- * Controllers * -->
+  <!-- *************** -->
+  <controllers>
+    <footbot_collector_controller id="fcc"
+        library="build/controllers/footbot_collector/libfootbot_collector">
+      <actuators>
+        <differential_steering implementation="default" />
+        <leds implementation="default" medium="leds" />
+        <range_and_bearing implementation="default" />
+      </actuators>
+      <sensors>
+        <footbot_proximity implementation="default" show_rays="false" />
+        <positioning implementation="default" />
+        <!-- show_rays="true" draws the robot-to-robot communication links -->
+        <range_and_bearing implementation="medium" medium="rab" show_rays="true" />
+      </sensors>
+      <params>
+        <!-- vector-field motion driver (same scheme as the official
+             flocking example) -->
+        <wheel_turning hard_turn_angle_threshold="90"
+                       soft_turn_angle_threshold="70"
+                       no_turn_angle_threshold="10"
+                       max_speed="15" />
+        <!-- Lennard-Jones separation between robots (distances in cm) -->
+        <separation target_distance="40" gain="300" exponent="2" />
+        <!-- Lévy walk exploration (steps in meters).
+             nest_avoid_radius/nest_repel_gain: searchers are pushed out
+             of the ball-free area around the nest.
+             disperse_gain/disperse_range (cm): long-range mutual repulsion
+             between searchers so the swarm covers the whole arena. -->
+        <explore levy_alpha="1.5" min_step="0.6" max_step="5.0"
+                 nest_avoid_radius="1.2" nest_repel_gain="15"
+                 disperse_gain="8" disperse_range="150" />
+        <!-- nest must match the loop functions' nest below -->
+        <navigation nest="0,0" obstacle_gain="30" give_up_range="0.7" />
+      </params>
+    </footbot_collector_controller>
+  </controllers>
+
+  <!-- ****************** -->
+  <!-- * Loop functions * -->
+  <!-- ****************** -->
+  <loop_functions
+      library="build/loop_functions/collection_loop_functions/libcollection_loop_functions"
+      label="collection_loop_functions">
+    <!-- spawn_period: ticks between ball spawns (10 ticks = 1 s)
+         max_balls:    max balls on the ground at once
+         pickup_radius: robot-center-to-ball distance = "touching"
+         sight_range:  how far a robot can "see" a free ball -->
+    <collection spawn_period="15"
+                max_balls="20"
+                pickup_radius="0.18"
+                sight_range="1.2"
+                nest="0,0"
+                nest_radius="0.45"
+                spawn_min="-3.7,-3.7"
+                spawn_max="3.7,3.7" />
+  </loop_functions>
+
+  <!-- *********************** -->
+  <!-- * Arena configuration * -->
+  <!-- *********************** -->
+  <arena size="8, 8, 1" center="0,0,0.5">
+
+    <floor id="floor" source="loop_functions" pixels_per_meter="50" />
+
+    <box id="wall_north" size="8,0.1,0.3" movable="false">
+      <body position="0,4,0" orientation="0,0,0" />
+    </box>
+    <box id="wall_south" size="8,0.1,0.3" movable="false">
+      <body position="0,-4,0" orientation="0,0,0" />
+    </box>
+    <box id="wall_east" size="0.1,8,0.3" movable="false">
+      <body position="4,0,0" orientation="0,0,0" />
+    </box>
+    <box id="wall_west" size="0.1,8,0.3" movable="false">
+      <body position="-4,0,0" orientation="0,0,0" />
+    </box>
+
+    <distribute>
+      <position method="uniform" min="-3.8,-3.8,0" max="3.8,3.8,0" />
+      <orientation method="uniform" min="0,0,0" max="360,0,0" />
+      <entity quantity="10" max_trials="100">
+        <!-- rab_range: local communication radius (m) — must cover at
+             least 2x sight_range so two robots seeing the same ball from
+             opposite sides can still negotiate who takes it.
+             rab_data_size: payload bytes, must fit the packet built in
+             the controller (currently 12). -->
+        <foot-bot id="fb" rab_range="3" rab_data_size="12">
+          <controller config="fcc" />
+        </foot-bot>
+      </entity>
+    </distribute>
+
+  </arena>
+
+  <!-- ******************* -->
+  <!-- * Physics engines * -->
+  <!-- ******************* -->
+  <physics_engines>
+    <dynamics2d id="dyn2d" />
+  </physics_engines>
+
+  <!-- ********* -->
+  <!-- * Media * -->
+  <!-- ********* -->
+  <media>
+    <led id="leds" />
+    <range_and_bearing id="rab" />
+  </media>
+
+  <!-- ****************** -->
+  <!-- * Visualization * -->
+  <!-- ****************** -->
+  <visualization>
+    <qt-opengl>
+      <camera>
+        <placements>
+          <placement index="0" position="0,0,8.4" look_at="0,0,0" up="1,0,0" lens_focal_length="20" />
+        </placements>
+      </camera>
+      <user_functions label="collection_qt_user_functions" />
+    </qt-opengl>
+  </visualization>
+
+</argos-configuration>

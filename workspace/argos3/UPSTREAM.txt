@@ -1,0 +1,2 @@
+ARGoS3 source vendored from https://github.com/ilpincy/argos3
+Upstream commit: 4bb398cd6bfdd09fc919f24c9cccbff38370849b (master, shallow clone 2026-07-08)
