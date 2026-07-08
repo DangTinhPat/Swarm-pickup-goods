@@ -155,7 +155,10 @@ private:
 
    /* Parameters */
    CVector2 m_cNestPos;
-   Real     m_fObstacleGain;   /* proximity repulsion strength */
+   Real     m_fObstacleGain;   /* proximity repulsion strength (blended) */
+   Real     m_fHardAvoidThreshold; /* accumulated proximity above this ->
+                                      collision imminent, avoidance overrides
+                                      every other force this tick */
    Real     m_fGiveUpRange;    /* if closer than this to the claimed ball
                                   and still not seeing it, give up (m) */
 

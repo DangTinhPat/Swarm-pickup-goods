@@ -17,7 +17,10 @@ CCollectionLoopFunctions::CCollectionLoopFunctions() :
    m_fNestRadius(0.45),
    m_cSpawnRangeX(-0.7, 1.7),
    m_cSpawnRangeY(-1.7, 1.7),
-   m_unScore(0) {
+   m_unScore(0),
+   m_unCollisionTicks(0),
+   m_fMinPairDistance(1000.0),
+   m_fMinWallClearance(1000.0) {
 }
 
 /****************************************/
@@ -52,6 +55,20 @@ void CCollectionLoopFunctions::Init(TConfigurationNode& t_node) {
 void CCollectionLoopFunctions::Reset() {
    m_cBalls.clear();
    m_unScore = 0;
+   m_unCollisionTicks = 0;
+   m_fMinPairDistance = 1000.0;
+   m_fMinWallClearance = 1000.0;
+}
+
+/****************************************/
+/****************************************/
+
+void CCollectionLoopFunctions::Destroy() {
+   LOG << "[collection] Final score: " << m_unScore
+       << " | collision pair-ticks: " << m_unCollisionTicks
+       << " | closest pass: " << m_fMinPairDistance << " m"
+       << " | closest wall: " << m_fMinWallClearance << " m" << std::endl;
+   LOG.Flush();
 }
 
 /****************************************/
@@ -88,6 +105,7 @@ void CCollectionLoopFunctions::PreStep() {
    }
 
    CSpace::TMapPerType& cFootBots = GetSpace().GetEntitiesByType("foot-bot");
+   std::vector<CVector2> cRobotPositions;
    for(CSpace::TMapPerType::iterator it = cFootBots.begin();
        it != cFootBots.end();
        ++it) {
@@ -96,6 +114,7 @@ void CCollectionLoopFunctions::PreStep() {
          dynamic_cast<CFootBotCollector&>(cFootBot.GetControllableEntity().GetController());
       CVector2 cPos(cFootBot.GetEmbodiedEntity().GetOriginAnchor().Position.GetX(),
                     cFootBot.GetEmbodiedEntity().GetOriginAnchor().Position.GetY());
+      cRobotPositions.push_back(cPos);
 
       /* Virtual camera: nearest free ball within sight range. Carrying
        * robots also get sightings — they broadcast them so free
@@ -135,6 +154,25 @@ void CCollectionLoopFunctions::PreStep() {
          }
          else if(nSighted >= 0) {
             cController.SetBallSighting(m_cBalls[nSighted]);
+         }
+      }
+   }
+
+   /* Collision metric: foot-bot body radius = 0.085 m, so two bodies
+    * touch when centers are < 0.171 m apart; count with a 1 cm margin */
+   for(size_t i = 0; i < cRobotPositions.size(); ++i) {
+      Real fWall = 3.95 - Max(Abs(cRobotPositions[i].GetX()),
+                              Abs(cRobotPositions[i].GetY()));
+      if(fWall < m_fMinWallClearance) {
+         m_fMinWallClearance = fWall;
+      }
+      for(size_t j = i + 1; j < cRobotPositions.size(); ++j) {
+         Real fDist = (cRobotPositions[i] - cRobotPositions[j]).Length();
+         if(fDist < 0.181) {
+            ++m_unCollisionTicks;
+         }
+         if(fDist < m_fMinPairDistance) {
+            m_fMinPairDistance = fDist;
          }
       }
    }

@@ -15,8 +15,8 @@
   <!-- * Controllers * -->
   <!-- *************** -->
   <controllers>
-    <footbot_collector_controller id="fcc"
-        library="build/controllers/footbot_collector/libfootbot_collector">
+    <footbot_warehouse_controller id="fwc"
+        library="build/controllers/footbot_warehouse/libfootbot_warehouse">
       <actuators>
         <differential_steering implementation="default" />
         <leds implementation="default" medium="leds" />
@@ -25,53 +25,39 @@
       <sensors>
         <footbot_proximity implementation="default" show_rays="false" />
         <positioning implementation="default" />
-        <!-- show_rays="true" draws the robot-to-robot communication links -->
         <range_and_bearing implementation="medium" medium="rab" show_rays="true" />
       </sensors>
       <params>
-        <!-- vector-field motion driver (same scheme as the official
-             flocking example) -->
         <wheel_turning hard_turn_angle_threshold="90"
                        soft_turn_angle_threshold="70"
                        no_turn_angle_threshold="10"
-                       max_speed="15" />
+                       max_speed="36" />
         <!-- Lennard-Jones separation between robots (distances in cm) -->
-        <separation target_distance="45" gain="400" exponent="2" />
-        <!-- Lévy walk exploration (steps in meters).
-             nest_avoid_radius/nest_repel_gain: searchers are pushed out
-             of the ball-free area around the nest.
-             disperse_gain/disperse_range (cm): long-range mutual repulsion
-             between searchers so the swarm covers the whole arena. -->
-        <explore levy_alpha="1.5" min_step="0.6" max_step="5.0"
-                 nest_avoid_radius="1.2" nest_repel_gain="15"
-                 disperse_gain="8" disperse_range="150" />
-        <!-- nest must match the loop functions' nest below.
-             hard_avoid_threshold: proximity level above which collision
-             avoidance overrides every other force for that tick -->
-        <navigation nest="0,0" obstacle_gain="100"
-                    hard_avoid_threshold="0.05" give_up_range="0.7" />
+        <separation target_distance="45" gain="800" exponent="2" />
+        <navigation obstacle_gain="200" hard_avoid_threshold="0.04" />
+        <!-- Facility map: must match the loop functions' layout below -->
+        <stations belt0="3.0,-2.4" belt1="3.0,0" belt2="3.0,2.4"
+                  addr_a="-3.4,-3.2" addr_b="-3.4,-1.6" addr_c="-3.4,0"
+                  addr_d="-3.4,1.6" addr_e="-3.4,3.2"
+                  dock_center="0,3.3" dock_rows="5" dock_cols="2" dock_spacing="0.55" />
       </params>
-    </footbot_collector_controller>
+    </footbot_warehouse_controller>
   </controllers>
 
   <!-- ****************** -->
   <!-- * Loop functions * -->
   <!-- ****************** -->
   <loop_functions
-      library="build/loop_functions/collection_loop_functions/libcollection_loop_functions"
-      label="collection_loop_functions">
-    <!-- spawn_period: ticks between ball spawns (10 ticks = 1 s)
-         max_balls:    max balls on the ground at once
-         pickup_radius: robot-center-to-ball distance = "touching"
-         sight_range:  how far a robot can "see" a free ball -->
-    <collection spawn_period="15"
-                max_balls="20"
-                pickup_radius="0.18"
-                sight_range="1.2"
-                nest="0,0"
-                nest_radius="0.45"
-                spawn_min="-3.7,-3.7"
-                spawn_max="3.7,3.7" />
+      library="build/loop_functions/warehouse_loop_functions/libwarehouse_loop_functions"
+      label="warehouse_loop_functions">
+    <!-- spawn_period: ticks between parcel arrivals (10 ticks = 1 s)
+         queue_cap:    bin capacity per belt
+         pickup_radius: handover distance at the bin pickup point -->
+    <warehouse belt0="3.0,-2.4" belt1="3.0,0" belt2="3.0,2.4"
+               addr_a="-3.4,-3.2" addr_b="-3.4,-1.6" addr_c="-3.4,0"
+               addr_d="-3.4,1.6" addr_e="-3.4,3.2"
+               dock_center="0,3.3" dock_rows="5" dock_cols="2" dock_spacing="0.55" zone_half="0.4"
+               spawn_period="12" queue_cap="6" pickup_radius="0.35" />
   </loop_functions>
 
   <!-- *********************** -->
@@ -94,17 +80,27 @@
       <body position="-4,0,0" orientation="0,0,0" />
     </box>
 
+    <!-- The three conveyor belts (physical boxes at the east wall).
+         Their bins/pickup points are 0.45 m in front of each face. -->
+    <box id="conveyor_0" size="0.5,0.8,0.3" movable="false">
+      <body position="3.7,-2.4,0" orientation="0,0,0" />
+    </box>
+    <box id="conveyor_1" size="0.5,0.8,0.3" movable="false">
+      <body position="3.7,0,0" orientation="0,0,0" />
+    </box>
+    <box id="conveyor_2" size="0.5,0.8,0.3" movable="false">
+      <body position="3.7,2.4,0" orientation="0,0,0" />
+    </box>
+
+    <!-- 10 robots spawn exactly on the dock slots (grid layout matches
+         dock_rows x dock_cols x dock_spacing), already facing the belts -->
     <distribute>
-      <position method="uniform" min="-3.8,-3.8,0" max="3.8,3.8,0" />
-      <orientation method="uniform" min="0,0,0" max="360,0,0" />
+      <position method="grid" center="0,3.3,0"
+                distances="0.55,0.55,0" layout="5,2,1" />
+      <orientation method="constant" values="0,0,0" />
       <entity quantity="10" max_trials="100">
-        <!-- rab_range: local communication radius (m) — must cover at
-             least 2x sight_range so two robots seeing the same ball from
-             opposite sides can still negotiate who takes it.
-             rab_data_size: payload bytes, must fit the packet built in
-             the controller (currently 12). -->
-        <foot-bot id="fb" rab_range="3" rab_data_size="12">
-          <controller config="fcc" />
+        <foot-bot id="fb" rab_range="3" rab_data_size="7">
+          <controller config="fwc" />
         </foot-bot>
       </entity>
     </distribute>
@@ -136,7 +132,7 @@
           <placement index="0" position="0,0,8.4" look_at="0,0,0" up="1,0,0" lens_focal_length="20" />
         </placements>
       </camera>
-      <user_functions label="collection_qt_user_functions" />
+      <user_functions label="warehouse_qt_user_functions" />
     </qt-opengl>
   </visualization>
 

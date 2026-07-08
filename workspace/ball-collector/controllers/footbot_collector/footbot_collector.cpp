@@ -83,7 +83,8 @@ CFootBotCollector::CFootBotCollector() :
    m_pcProximity(NULL),
    m_pcPosition(NULL),
    m_pcRNG(NULL),
-   m_fObstacleGain(30.0),
+   m_fObstacleGain(100.0),
+   m_fHardAvoidThreshold(0.08),
    m_fGiveUpRange(0.7),
    m_eState(STATE_EXPLORE),
    m_bCarrying(false),
@@ -111,6 +112,7 @@ void CFootBotCollector::Init(TConfigurationNode& t_node) {
    TConfigurationNode& tNav = GetNode(t_node, "navigation");
    GetNodeAttribute(tNav, "nest", m_cNestPos);
    GetNodeAttributeOrDefault(tNav, "obstacle_gain", m_fObstacleGain, m_fObstacleGain);
+   GetNodeAttributeOrDefault(tNav, "hard_avoid_threshold", m_fHardAvoidThreshold, m_fHardAvoidThreshold);
    GetNodeAttributeOrDefault(tNav, "give_up_range", m_fGiveUpRange, m_fGiveUpRange);
 
    /* Stable per-robot id for deterministic claim tie-breaking */
@@ -227,7 +229,47 @@ void CFootBotCollector::ControlStep() {
       }
    }
 
-   /* 4. Potential-field motion: goal + separation + obstacle repulsion */
+   /* 4a. Collision imminent? Proximity range is only ~10 cm, so once the
+    * accumulated reading is significant the potential-field blend is not
+    * allowed to push through: avoidance overrides everything this tick. */
+   {
+      const CCI_FootBotProximitySensor::TReadings& tProx = m_pcProximity->GetReadings();
+      CVector2 cProxAccum;
+      for(size_t i = 0; i < tProx.size(); ++i) {
+         cProxAccum += CVector2(tProx[i].Value, tProx[i].Angle);
+      }
+      cProxAccum /= tProx.size();
+      Real fProxLen = cProxAccum.Length();
+      if(fProxLen > m_fHardAvoidThreshold) {
+         /* Two-stage avoidance:
+          * - emergency (very close, 3x threshold): rotate in place — no
+          *   forward component, contact is geometrically impossible;
+          * - normal: turn hard away while still moving, keeping progress
+          *   (important around the crowded nest). */
+         Real fOuter = fProxLen > 3.0 * m_fHardAvoidThreshold
+                       ? 0.5 * m_sWheelTurningParams.MaxSpeed   /* pivot */
+                       : m_sWheelTurningParams.MaxSpeed;        /* moving turn */
+         Real fInner = -0.5 * m_sWheelTurningParams.MaxSpeed;
+         if(cProxAccum.Angle() > CRadians::ZERO) {
+            m_pcWheels->SetLinearVelocity(fOuter, fInner);
+         }
+         else {
+            m_pcWheels->SetLinearVelocity(fInner, fOuter);
+         }
+         /* Billiard bounce: an exploring robot redirects its Lévy leg
+          * away from the obstacle instead of fighting the wall */
+         if(m_eState == STATE_EXPLORE) {
+            m_cWalkHeading = m_cYaw + cProxAccum.Angle() + CRadians::PI +
+                             CRadians(m_pcRNG->Uniform(CRange<Real>(-0.5, 0.5)));
+            m_cWalkHeading.SignedNormalize();
+         }
+         Broadcast();
+         m_bSightingFresh = false;
+         return;
+      }
+   }
+
+   /* 4b. Potential-field motion: goal + separation + obstacle repulsion */
    CVector2 cGoal;
    switch(m_eState) {
       case STATE_RETURN:
@@ -366,8 +408,9 @@ CVector2 CFootBotCollector::SeparationVector() {
       Real fLJ = m_sSeparationParams.RepulsionOnlyLJ(tPackets[i].Range);
       cAccum += CVector2(fLJ, tPackets[i].HorizontalBearing);
    }
-   /* Cap so separation never fully overrides the goal (chaos control) */
-   Real fCap = 0.6 * m_sWheelTurningParams.MaxSpeed;
+   /* Cap keeps mid-range jitter down, but at 1.2x max speed separation
+    * is allowed to beat the goal vector when robots get really close */
+   Real fCap = 1.2 * m_sWheelTurningParams.MaxSpeed;
    if(cAccum.Length() > fCap) {
       cAccum.Normalize();
       cAccum *= fCap;

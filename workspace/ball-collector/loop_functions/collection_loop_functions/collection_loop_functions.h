@@ -35,6 +35,7 @@ public:
    virtual void Init(TConfigurationNode& t_node);
    virtual void Reset();
    virtual void PreStep();
+   virtual void Destroy();
    virtual CColor GetFloorColor(const CVector2& c_position_on_plane);
 
    /* Read by the QT user functions for drawing */
@@ -62,6 +63,13 @@ private:
    CRange<Real> m_cSpawnRangeY;
 
    UInt32 m_unScore;
+   /* Collision metrics: pair-ticks in body contact (centers < 18.1 cm;
+    * body radius 8.5 cm -> touch at 17.1 cm) + closest pass ever seen */
+   UInt32 m_unCollisionTicks;
+   Real   m_fMinPairDistance;
+   /* Closest robot-center-to-wall-face distance seen (walls at +/-4,
+    * 0.05 half-thickness -> inner face 3.95; body touches at 0.085) */
+   Real   m_fMinWallClearance;
 };
 
 #endif

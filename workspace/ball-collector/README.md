@@ -143,6 +143,16 @@ V_tổng = V_mục_tiêu + V_tách_đàn + V_né_vật_cản [+ V_phân_tán khi
 | `V_mục_tiêu` | positioning | hướng tới nest / bóng / hướng Lévy, độ lớn = max_speed |
 | `V_tách_đàn` | RAB (range + bearing hàng xóm) | Lennard-Jones phần đẩy, chỉ khi gần hơn 40 cm, giới hạn ≤ 60% max_speed |
 | `V_né_vật_cản` | 24 cảm biến proximity | đẩy ngược hướng tổng các tia chạm (tường + robot sát cạnh) |
+
+Riêng né va chạm có thêm **2 tầng ưu tiên tuyệt đối** (vì proximity chỉ
+nhìn được ~10 cm, không được phép để trường thế "đẩy xuyên"): vượt ngưỡng
+`hard_avoid_threshold` → rẽ gắt khi đang chạy, bỏ qua mọi lực khác tick
+đó; vượt 3× ngưỡng (sát sạt) → xoay tại chỗ (không còn thành phần lao
+tới, về mặt hình học không thể chạm). Robot đang thăm dò gặp tường còn
+"nảy" hướng Lévy ra ngoài như bi-a. Loop functions có sẵn bộ đo: cuối mỗi
+lần chạy in `collision pair-ticks` (số tick có cặp robot chạm nhau) và
+`closest pass` / `closest wall` (khoảng cách sát nhất từng xảy ra) —
+kiểm chứng 10 phút: 0 va chạm, tường không bao giờ bị chạm (hở ≥ 0.9 cm).
 | `V_phân_tán` | RAB | đẩy nhẹ khỏi mọi hàng xóm trong 1.5 m, giảm tuyến tính (chỉ khi EXPLORE) |
 | (+ đẩy khỏi nest) | positioning | khi EXPLORE trong bán kính 1.2 m quanh nest |
 
@@ -231,12 +241,13 @@ không có trọng tài:
 | Tham số | Mặc định | Ý nghĩa |
 |---|---|---|
 | `max_speed` (wheel_turning) | 15 | tốc độ bánh xe (cm/s) |
-| `target_distance` (separation) | 40 | cự ly giãn cách LJ (cm) |
-| `gain` / `exponent` (separation) | 300 / 2 | độ mạnh + độ dốc thế LJ |
+| `target_distance` (separation) | 45 | cự ly giãn cách LJ (cm) |
+| `gain` / `exponent` (separation) | 400 / 2 | độ mạnh + độ dốc thế LJ |
 | `levy_alpha` / `min_step` / `max_step` | 1.5 / 0.6 / 5.0 | tham số Lévy walk |
 | `nest_avoid_radius` / `nest_repel_gain` | 1.2 / 15 | vùng cấm-tìm quanh nest + lực đẩy |
 | `disperse_gain` / `disperse_range` | 8 / 150 | lực giãn đàn + tầm (cm) |
-| `obstacle_gain` (navigation) | 30 | độ mạnh né vật cản |
+| `obstacle_gain` (navigation) | 100 | độ mạnh né vật cản (thành phần blended) |
+| `hard_avoid_threshold` (navigation) | 0.05 | ngưỡng proximity kích hoạt né tuyệt đối (3× = xoay tại chỗ) |
 | `give_up_range` (navigation) | 0.7 | tới gần claim mức này mà không thấy bóng → bỏ (m) |
 | `rab_range` (trên `<foot-bot>`) | 3 | tầm giao tiếp (m), **phải ≥ 2× sight_range** |
 | `rab_data_size` (trên `<foot-bot>`) | 12 | byte gói tin, phải khớp `Broadcast()` |
