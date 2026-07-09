@@ -1,5 +1,10 @@
 link_directories(${CMAKE_BINARY_DIR}/controllers/footbot_warehouse)
-set(warehouse_loop_functions_SOURCES warehouse_loop_functions.cpp)
+set(warehouse_loop_functions_SOURCES
+  warehouse_loop_functions.cpp
+  warehouse_floor_render.cpp
+  warehouse_spawning.cpp
+  warehouse_robot_update.cpp
+  warehouse_metrics.cpp)
 
 if(ARGOS_QTOPENGL_FOUND)
   include_directories(${ARGOS_QTOPENGL_INCLUDE_DIRS})

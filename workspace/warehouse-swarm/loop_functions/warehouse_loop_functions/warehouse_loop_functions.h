@@ -9,12 +9,22 @@
  *   per tick — like a worker handing over one box at a time).
  * - Delivery: when a loaded robot enters the zone matching its parcel's
  *   address, the parcel is accepted and counted.
- * - Facility WMS feed: every tick each robot receives the three queue
- *   lengths (public IoT information; the *decision* what to do with it
- *   stays fully decentralized in the controllers).
- * - Floor painting: depot circle + 5 colored address zones.
+ * - Belt ground truth: robots only get to SENSE (not globally read) each
+ *   belt's queue length + blocked flag — see footbot_comms.cpp.
+ * - Floor painting: dock/charging bays (+ stigmergy tint) and 5 colored
+ *   address zones.
  * - Metrics: per-address and total deliveries, collision pair-ticks,
- *   closest robot-robot pass, closest wall approach.
+ *   closest robot-robot pass, closest wall approach, energy.
+ *
+ * PreStep() (in warehouse_loop_functions.cpp) is a thin per-tick
+ * orchestrator; the actual work is split by behavior across:
+ *   warehouse_loop_functions.cpp  - lifecycle (Init/Reset/Destroy) + PreStep
+ *   warehouse_floor_render.cpp    - GetFloorColor / AddressColor
+ *   warehouse_spawning.cpp        - parcel spawn, belt ground truth, handover
+ *   warehouse_robot_update.cpp    - per-robot per-tick pass: docking/
+ *                                    charging/stigmergy, energy metrics,
+ *                                    delivery detection
+ *   warehouse_metrics.cpp         - collision / wall-clearance metrics
  */
 
 #ifndef WAREHOUSE_LOOP_FUNCTIONS_H
@@ -30,6 +40,8 @@
 #include <string>
 
 using namespace argos;
+
+class CFootBotWarehouse;
 
 class CWarehouseLoopFunctions : public CLoopFunctions {
 
@@ -60,6 +72,33 @@ public:
 
 private:
 
+   /* ==== warehouse_spawning.cpp — parcel/belt lifecycle ==== */
+   void SpawnParcel();
+   /* Fills per-belt queue length + whether a dead robot blocks the
+    * pickup point — this is the ground truth the controllers only get
+    * to SENSE locally (see footbot_comms.cpp), never read globally */
+   void ComputeBeltGroundTruth(UInt8* pun_queue_lens, bool* pb_blocked);
+   void HandoverAtBelts(const std::vector<CVector2>& c_positions,
+                         const std::vector<CFootBotWarehouse*>& c_controllers);
+
+   /* ==== warehouse_robot_update.cpp — per-robot per-tick pass ==== */
+   /* Stigmergy trail decay, applied once per tick regardless of activity
+    * (what makes it a genuine fading trace, not a permanent record) */
+   void UpdateStigmergyDecay();
+   /* One pass over the fleet: injects belt ground truth, handles
+    * docking/charging/stigmergy-bump, tracks energy metrics, and detects
+    * deliveries — bundled into a single pass (rather than 4 separate
+    * fleet iterations) since all four operate on the same one robot at
+    * a time with no cross-robot ordering dependency. Fills c_positions/
+    * c_controllers for the callers that need them afterward (handover,
+    * collision metrics). */
+   void UpdateRobots(const UInt8* pun_queue_lens, const bool* pb_blocked,
+                      std::vector<CVector2>& c_positions,
+                      std::vector<CFootBotWarehouse*>& c_controllers);
+
+   /* ==== warehouse_metrics.cpp — collision / wall-clearance ==== */
+   void UpdateCollisionMetrics(const std::vector<CVector2>& c_positions);
+
    CFloorEntity* m_pcFloor;
    CRandom::CRNG* m_pcRNG;
 
@@ -75,6 +114,20 @@ private:
    /* Consecutive on-bay ticks per robot (keyed by robot id) */
    std::map<std::string, UInt32> m_mapWarmup;
    Real     m_fZoneHalf;      /* address zones are squares of this half-size */
+
+   /* Stigmergy: a fading trace of how much recent activity each dock
+    * side (0=left/y>0, 1=right/y<0) has seen, painted as a gray tint
+    * near that row and sensed by robots' real ground sensor — not a
+    * number handed to the controller. Bumped when a robot newly settles
+    * onto a bay on that side (edge-triggered on the false->true parked
+    * transition, tracked per robot id), decayed a little every tick. */
+   Real m_fSideActivity[2];
+   std::map<std::string, bool> m_mapWasParked;
+   Real m_fStigmergyDecay;    /* multiplicative decay per tick */
+   Real m_fStigmergyGain;     /* activity added per fresh arrival */
+   bool SlotIsLeftSide(size_t un_slot) const {
+      return m_cDockSlots[un_slot].GetY() > 0.0;
+   }
 
    /* Parcel flow */
    UInt32 m_unSpawnPeriod;    /* ticks between parcel arrivals */

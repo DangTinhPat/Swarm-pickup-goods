@@ -1,22 +1,14 @@
+/*
+ * Core lifecycle (Init/Reset/Destroy) + the PreStep per-tick orchestrator.
+ * Behavior-specific logic lives in the sibling warehouse_*.cpp files
+ * listed in warehouse_loop_functions.h; this file wires them together.
+ */
 #include "warehouse_loop_functions.h"
 #include <argos3/core/simulator/simulator.h>
 #include <argos3/core/utility/configuration/argos_configuration.h>
 #include <argos3/plugins/robots/foot-bot/simulator/footbot_entity.h>
 #include <argos3/plugins/simulator/entities/battery_equipped_entity.h>
 #include <controllers/footbot_warehouse/footbot_warehouse.h>
-
-/****************************************/
-/****************************************/
-
-CColor CWarehouseLoopFunctions::AddressColor(UInt32 un_addr) {
-   switch(un_addr) {
-      case 0:  return CColor::RED;      /* A */
-      case 1:  return CColor::GREEN;    /* B */
-      case 2:  return CColor::BLUE;     /* C */
-      case 3:  return CColor::YELLOW;   /* D */
-      default: return CColor::MAGENTA;  /* E */
-   }
-}
 
 /****************************************/
 /****************************************/
@@ -35,8 +27,12 @@ CWarehouseLoopFunctions::CWarehouseLoopFunctions() :
    m_fMinPairDistance(1000.0),
    m_fMinWallClearance(1000.0),
    m_fMinChargeSeen(1.0),
-   m_unDeadTicks(0) {
+   m_unDeadTicks(0),
+   m_fStigmergyDecay(0.998),
+   m_fStigmergyGain(1.0) {
    for(UInt32 i = 0; i < NUM_ADDRS; ++i) m_unDeliveredPerAddr[i] = 0;
+   m_fSideActivity[0] = 0.0;
+   m_fSideActivity[1] = 0.0;
 }
 
 /****************************************/
@@ -77,6 +73,8 @@ void CWarehouseLoopFunctions::Init(TConfigurationNode& t_node) {
       GetNodeAttribute(tWh, "pickup_radius", m_fPickupRadius);
       GetNodeAttributeOrDefault(tWh, "charge_rate", m_fChargeRate, m_fChargeRate);
       GetNodeAttributeOrDefault(tWh, "charge_warmup", m_unChargeWarmup, m_unChargeWarmup);
+      GetNodeAttributeOrDefault(tWh, "stigmergy_decay", m_fStigmergyDecay, m_fStigmergyDecay);
+      GetNodeAttributeOrDefault(tWh, "stigmergy_gain", m_fStigmergyGain, m_fStigmergyGain);
    }
    catch(CARGoSException& ex) {
       THROW_ARGOSEXCEPTION_NESTED("Error parsing warehouse loop functions!", ex);
@@ -110,6 +108,9 @@ void CWarehouseLoopFunctions::Reset() {
    m_unDeadTicks = 0;
    std::fill(m_unSlotStatus.begin(), m_unSlotStatus.end(), (UInt8)0);
    m_mapWarmup.clear();
+   m_fSideActivity[0] = 0.0;
+   m_fSideActivity[1] = 0.0;
+   m_mapWasParked.clear();
 }
 
 /****************************************/
@@ -149,164 +150,22 @@ void CWarehouseLoopFunctions::Destroy() {
 /****************************************/
 /****************************************/
 
-CColor CWarehouseLoopFunctions::GetFloorColor(const CVector2& c_pos) {
-   /* Charging bays: darker square per slot — GREEN while it is
-    * actively charging a robot; a light pad tile around each slot */
-   for(size_t s = 0; s < m_cDockSlots.size(); ++s) {
-      if(Abs(c_pos.GetX() - m_cDockSlots[s].GetX()) < 0.14 &&
-         Abs(c_pos.GetY() - m_cDockSlots[s].GetY()) < 0.14) {
-         if(m_unSlotStatus[s] == 2) return CColor(60, 200, 90);    /* charging */
-         if(m_unSlotStatus[s] == 1) return CColor(235, 180, 60);    /* warming up */
-         return CColor::GRAY50;
-      }
-   }
-   for(size_t s = 0; s < m_cDockSlots.size(); ++s) {
-      if(Abs(c_pos.GetX() - m_cDockSlots[s].GetX()) < 0.45 &&
-         Abs(c_pos.GetY() - m_cDockSlots[s].GetY()) < 0.45) {
-         return CColor::GRAY80;
-      }
-   }
-   /* Address zones: light shade of the address color */
-   for(UInt32 a = 0; a < NUM_ADDRS; ++a) {
-      if(Abs(c_pos.GetX() - m_cAddrPos[a].GetX()) < m_fZoneHalf &&
-         Abs(c_pos.GetY() - m_cAddrPos[a].GetY()) < m_fZoneHalf) {
-         CColor cFull = AddressColor(a);
-         return CColor((cFull.GetRed() + 2 * 255) / 3,
-                       (cFull.GetGreen() + 2 * 255) / 3,
-                       (cFull.GetBlue() + 2 * 255) / 3);
-      }
-   }
-   return CColor::WHITE;
-}
-
-/****************************************/
-/****************************************/
-
 void CWarehouseLoopFunctions::PreStep() {
-   /* Conveyor output: a parcel with a random address lands in a random
-    * belt's bin, continuously */
-   if(GetSpace().GetSimulationClock() % m_unSpawnPeriod == 0) {
-      UInt32 unBelt = m_pcRNG->Uniform(CRange<UInt32>(0, NUM_BELTS));
-      if(m_cQueues[unBelt].size() < m_unQueueCap) {
-         m_cQueues[unBelt].push_back(
-            (UInt8)m_pcRNG->Uniform(CRange<UInt32>(0, NUM_ADDRS)));
-      }
-   }
+   UpdateStigmergyDecay();
+   SpawnParcel();
 
-   /* Gather robots; feed them the WMS queue info; handle deliveries */
+   /* Ground truth for the belt-gossip system (see footbot_comms.cpp for
+    * why this is only "sensed", not broadcast globally to everyone) */
    UInt8 unQueueLens[NUM_BELTS];
-   for(UInt32 b = 0; b < NUM_BELTS; ++b) {
-      unQueueLens[b] = (UInt8)m_cQueues[b].size();
-   }
+   bool bBlocked[NUM_BELTS];
+   ComputeBeltGroundTruth(unQueueLens, bBlocked);
 
    std::vector<CVector2> cPositions;
    std::vector<CFootBotWarehouse*> cControllers;
-   std::vector<UInt8> cStatusNow(m_cDockSlots.size(), 0);
-   CSpace::TMapPerType& cFootBots = GetSpace().GetEntitiesByType("foot-bot");
-   for(CSpace::TMapPerType::iterator it = cFootBots.begin();
-       it != cFootBots.end();
-       ++it) {
-      CFootBotEntity& cFootBot = *any_cast<CFootBotEntity*>(it->second);
-      CFootBotWarehouse& cController =
-         dynamic_cast<CFootBotWarehouse&>(cFootBot.GetControllableEntity().GetController());
-      CVector2 cPos(cFootBot.GetEmbodiedEntity().GetOriginAnchor().Position.GetX(),
-                    cFootBot.GetEmbodiedEntity().GetOriginAnchor().Position.GetY());
-      cPositions.push_back(cPos);
-      cControllers.push_back(&cController);
+   UpdateRobots(unQueueLens, bBlocked, cPositions, cControllers);
 
-      cController.SetBeltQueues(unQueueLens);
-
-      /* Charging bays: after a 5 s docking handshake (warm-up) on the
-       * bay, power flows. Pad: orange while warming up, green while
-       * charging. Leaving the bay resets the handshake. */
-      CBatteryEquippedEntity& cBattery = cFootBot.GetBatterySensorEquippedEntity();
-      bool bOnBay = false;
-      for(size_t s = 0; s < m_cDockSlots.size(); ++s) {
-         if((cPos - m_cDockSlots[s]).Length() < 0.18) {
-            bOnBay = true;
-            UInt32& unWarm = m_mapWarmup[cFootBot.GetId()];
-            ++unWarm;
-            if(cBattery.GetAvailableCharge() < cBattery.GetFullCharge()) {
-               if(unWarm >= m_unChargeWarmup) {
-                  cBattery.SetAvailableCharge(
-                     Min(cBattery.GetFullCharge(),
-                         cBattery.GetAvailableCharge() +
-                         m_fChargeRate * cBattery.GetFullCharge()));
-                  cStatusNow[s] = 2;
-               }
-               else {
-                  cStatusNow[s] = 1;
-               }
-            }
-            break;
-         }
-      }
-      if(!bOnBay) {
-         m_mapWarmup.erase(cFootBot.GetId());
-      }
-      /* Energy metrics */
-      Real fFrac = cBattery.GetAvailableCharge() / cBattery.GetFullCharge();
-      if(fFrac < m_fMinChargeSeen) m_fMinChargeSeen = fFrac;
-      if(fFrac <= 0.005) ++m_unDeadTicks;
-
-      /* Delivery: loaded robot inside its parcel's address zone */
-      if(cController.IsCarrying()) {
-         UInt32 unAddr = cController.GetCarriedAddress();
-         if(Abs(cPos.GetX() - m_cAddrPos[unAddr].GetX()) < m_fZoneHalf &&
-            Abs(cPos.GetY() - m_cAddrPos[unAddr].GetY()) < m_fZoneHalf) {
-            cController.Deliver();
-            ++m_unDelivered;
-            ++m_unDeliveredPerAddr[unAddr];
-            LOG << "[warehouse] " << cFootBot.GetId()
-                << " delivered to " << (char)('A' + unAddr)
-                << ". Total: " << m_unDelivered << std::endl;
-         }
-      }
-   }
-
-   /* Handover at the bins: nearest empty-handed robot within reach gets
-    * the front parcel; one handover per belt per tick */
-   for(UInt32 b = 0; b < NUM_BELTS; ++b) {
-      if(m_cQueues[b].empty()) continue;
-      SInt32 nBest = -1;
-      Real fBestDist = m_fPickupRadius;
-      for(size_t i = 0; i < cPositions.size(); ++i) {
-         if(cControllers[i]->IsCarrying() || !cControllers[i]->WantsWork()) continue;
-         Real fDist = (cPositions[i] - m_cBeltPickup[b]).Length();
-         if(fDist < fBestDist) {
-            fBestDist = fDist;
-            nBest = i;
-         }
-      }
-      if(nBest >= 0) {
-         cControllers[nBest]->AssignItem(m_cQueues[b].front());
-         m_cQueues[b].pop_front();
-      }
-   }
-
-   /* Repaint the floor when any bay changes status */
-   if(cStatusNow != m_unSlotStatus) {
-      m_unSlotStatus = cStatusNow;
-      m_pcFloor->SetChanged();
-   }
-
-   /* Collision metrics (same as ball-collector): body radius 0.085 m */
-   for(size_t i = 0; i < cPositions.size(); ++i) {
-      Real fWall = 3.95 - Max(Abs(cPositions[i].GetX()),
-                              Abs(cPositions[i].GetY()));
-      if(fWall < m_fMinWallClearance) {
-         m_fMinWallClearance = fWall;
-      }
-      for(size_t j = i + 1; j < cPositions.size(); ++j) {
-         Real fDist = (cPositions[i] - cPositions[j]).Length();
-         if(fDist < 0.181) {
-            ++m_unCollisionTicks;
-         }
-         if(fDist < m_fMinPairDistance) {
-            m_fMinPairDistance = fDist;
-         }
-      }
-   }
+   HandoverAtBelts(cPositions, cControllers);
+   UpdateCollisionMetrics(cPositions);
 }
 
 /****************************************/

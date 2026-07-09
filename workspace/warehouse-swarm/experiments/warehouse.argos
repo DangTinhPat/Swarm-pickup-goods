@@ -27,6 +27,7 @@
         <positioning implementation="default" />
         <range_and_bearing implementation="medium" medium="rab" show_rays="true" />
         <battery implementation="default" />
+        <footbot_motor_ground implementation="rot_z_only" />
       </sensors>
       <params>
         <wheel_turning hard_turn_angle_threshold="90"
@@ -35,7 +36,8 @@
                        max_speed="36" />
         <!-- Lennard-Jones separation between robots (distances in cm) -->
         <separation target_distance="45" gain="800" exponent="2" />
-        <navigation obstacle_gain="200" hard_avoid_threshold="0.04" />
+        <navigation obstacle_gain="200" hard_avoid_threshold="0.04"
+                    belt_sense_range="1.2" />
         <!-- Facility map: must match the loop functions' layout below -->
         <stations belt0="3.0,-2.4" belt1="3.0,0" belt2="3.0,2.4"
                   addr_a="-3.4,-3.2" addr_b="-3.4,-1.6" addr_c="-3.4,0"
@@ -44,11 +46,14 @@
                   pillar0="0,0" pillar1="2,2" pillar2="-2,2"
                   pillar3="2,-2" pillar4="-2,-2"
                   pillar_radius="0.075" pillar_range="0.8" />
-        <!-- Predictive energy management. drain_* must match the
-             <battery> discharge model on the foot-bot below. -->
-        <energy drain_per_meter="0.008" drain_per_tick="0.00002"
-                safety_factor="1.6" reserve_charge="0.08"
-                resume_charge="0.42" min_work_charge="0.40" hard_charge_threshold="0.05" />
+        <!-- Energy policy: flat thresholds, no distance prediction.
+             hard_charge_threshold: go charge only when below this (the
+             fleet's battery is large relative to the 8x8 m facility, so
+             a flat late trigger is safe without estimating trip cost).
+             resume_charge / min_work_charge: must recharge back up to
+             this level before leaving the bay / accepting a new job. -->
+        <energy resume_charge="0.70" min_work_charge="0.70"
+                hard_charge_threshold="0.10" />
       </params>
     </footbot_warehouse_controller>
   </controllers>
@@ -66,8 +71,9 @@
                addr_a="-3.4,-3.2" addr_b="-3.4,-1.6" addr_c="-3.4,0"
                addr_d="-3.4,1.6" addr_e="-3.4,3.2"
                dock_center="0,0" dock_rows="5" dock_cols="2" dock_spacing_x="0.55" dock_spacing_y="6.9" zone_half="0.4"
-               spawn_period="12" queue_cap="6" pickup_radius="0.35"
-               charge_rate="0.004" charge_warmup="50" />
+               spawn_period="36" queue_cap="6" pickup_radius="0.35"
+               charge_rate="0.002667" charge_warmup="50"
+               stigmergy_decay="0.998" stigmergy_gain="1.0" />
   </loop_functions>
 
   <!-- *********************** -->
@@ -127,11 +133,22 @@
                 distances="0.55,6.9,0" layout="5,2,1" />
       <orientation method="constant" values="0,0,0" />
       <entity quantity="10" max_trials="100">
-        <foot-bot id="fb" rab_range="3" rab_data_size="7">
+        <foot-bot id="fb" rab_range="3" rab_data_size="14">
           <controller config="fwc" />
           <!-- Battery: drains with distance driven + a small idle drain.
-               Factors must match the controller's <energy> model. -->
+               full_charge=6 -> 6x the ARGoS default (3x, then another 2x).
+               The discharge factors below are the PHYSICAL per-meter/
+               per-tick drain and are untouched by this — raising
+               full_charge alone makes the same physical drain consume a
+               smaller share of the reported (0..1) fraction, so the
+               robot simply goes proportionally farther per charge.
+               charge_rate below (fraction/tick) is also untouched, so
+               time to fully charge stays the same regardless of
+               capacity — charging speed and capacity are independent
+               here by design. -->
           <battery discharge_model="time_motion"
+                   full_charge="6.0"
+                   start_charge="6.0"
                    time_factor="0.00002"
                    pos_factor="0.008"
                    orient_factor="0.0005" />
