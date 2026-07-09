@@ -5,9 +5,6 @@
   <!-- * Cấu hình khung        * -->
   <!-- ************************* -->
   <framework>
-    <!-- threads="0": controller gọi thẳng API bảng đen của loop
-         functions trong ControlStep, chạy tuần tự là an toàn nhất
-         (API vẫn có mutex phòng khi bật đa luồng) -->
     <system threads="0" />
     <experiment length="0" ticks_per_second="10" random_seed="42" />
   </framework>
@@ -16,7 +13,8 @@
   <!-- * Controllers * -->
   <!-- *************** -->
   <controllers>
-    <!-- Controller va loop functions nam chung mot .so (phu thuoc 2 chieu) -->
+    <!-- Controller và loop functions gọi lẫn nhau (2 chiều) nên nằm
+         chung một .so — xem loop_functions/grid_loop_functions/CMakeLists.txt -->
     <footbot_grid_controller id="fgc"
         library="build/loop_functions/grid_loop_functions/libgrid_loop_functions">
       <actuators>
@@ -25,22 +23,21 @@
         <range_and_bearing implementation="default" />
       </actuators>
       <sensors>
-        <!-- encoder 2 bánh: nguồn dead-reckoning (sai số tích lũy) -->
         <differential_steering implementation="default" />
-        <!-- "camera gầm đọc QR sàn": chỉ được đọc khi cảm biến sàn
-             thấy đĩa đen ở hồng tâm ô -> xóa odometry drift về 0 -->
         <positioning implementation="default" />
         <footbot_motor_ground implementation="rot_z_only" />
         <range_and_bearing implementation="medium" medium="rab" show_rays="false" />
         <battery implementation="default" />
       </sensors>
       <params>
-        <!-- Bộ lái tỷ lệ bám tâm ô: v=v_max*cos(err), omega=Kp*err -->
-        <wheel max_speed_cms="25" turn_speed_cms="12" kp_heading="3.5"
-               hard_turn_deg="65" waypoint_tol="0.08" goal_tol="0.05" />
-        <!-- Chu kỳ pin trễ: dưới 20% bỏ việc đi sạc, trên 70% mới được rời dock -->
+        <!-- V_Base: 10 cm/s chạy thẳng, hạ còn 3 cm/s khi bẻ lái > 55°
+             (rẽ 90° tại tâm ô 0.2 m — chống trượt bánh, đúng yêu cầu) -->
+        <wheel cruise_speed_cms="10.0" pivot_speed_cms="3.0" kp_heading="3.5"
+               hard_turn_deg="55" waypoint_tol="0.02" goal_tol="0.02"
+               qr_snap_radius="0.02" />
+        <!-- Chu kỳ pin trễ: <=20% khẩn cấp, chỉ rời dock khi >=70% -->
         <battery low_threshold="0.20" leave_threshold="0.70" />
-        <timing pick_ticks="15" drop_ticks="15" />
+        <timing pick_ticks="15" drop_ticks="15" idle_rest_ticks="100" />
       </params>
     </footbot_grid_controller>
   </controllers>
@@ -51,105 +48,121 @@
   <loop_functions
       library="build/loop_functions/grid_loop_functions/libgrid_loop_functions"
       label="grid_loop_functions">
-    <!-- max_active_demands : số yêu cầu màu mở đồng thời trên ngăn xếp
-         demand_period      : tick giữa 2 lần thử mở yêu cầu mới
-         box_respawn_min/max: băng chuyền nhả hộp kế tiếp sau X tick
-         charge_rate        : phân số pin nạp mỗi tick khi đứng ở dock -->
-    <!-- time_factor/pos_factor: mô hình pin time_motion (xem chú thích
-         ở khu vực khai báo robot bên dưới) -->
-    <grid max_active_demands="7" demand_period="40"
-          box_respawn_min="30" box_respawn_max="120"
-          demand_cooldown_min="200" demand_cooldown_max="600"
-          charge_rate="0.0025" time_factor="0.00001" pos_factor="0.005"
+    <!-- Mô hình pin định lượng (đơn vị tuyệt đối, full_charge=10000
+         trên từng <battery> robot bên dưới — "starting_capacity" của
+         đề bài CHÍNH LÀ full_charge trong API thật của ARGoS, không
+         phải một tên thuộc tính riêng). discharging_factor/charging_factor
+         đúng 2 số đề bài yêu cầu; công thức + hiệu chỉnh BASE_RATE xem
+         chú thích trong grid_loop_functions.h — kết quả: pin cạn
+         100%->20% sau ~16-17 phút DI CHUYỂN LIÊN TỤC (trong khoảng
+         15-20 phút yêu cầu), sạc 20%->70% trong ~4 phút. -->
+    <grid max_active_demands="12" demand_period="30"
+          box_respawn_min="20" box_respawn_max="80"
+          demand_cooldown_min="150" demand_cooldown_max="450"
+          discharging_factor="0.05" charging_factor="2.0"
           log_period="1200" />
   </loop_functions>
 
   <!-- *********************** -->
-  <!-- * Arena 20 m x 20 m   * -->
+  <!-- * Arena 10 m x 10 m   * -->
   <!-- *********************** -->
-  <arena size="20, 20, 1" center="0,0,0.5">
+  <arena size="10, 10, 1" center="0,0,0.5">
 
-    <!-- Sàn do loop functions vẽ: lưới + đĩa QR + màu trạm -->
-    <floor id="floor" source="loop_functions" pixels_per_meter="40" />
+    <!-- Sàn do loop functions vẽ: lưới 0.2m + đĩa QR r=0.02m + màu trạm -->
+    <floor id="floor" source="loop_functions" pixels_per_meter="100" />
 
-    <box id="wall_north" size="20,0.1,0.3" movable="false">
-      <body position="0,10,0" orientation="0,0,0" />
+    <box id="wall_north" size="10,0.1,0.5" movable="false">
+      <body position="0,5,0" orientation="0,0,0" />
     </box>
-    <box id="wall_south" size="20,0.1,0.3" movable="false">
-      <body position="0,-10,0" orientation="0,0,0" />
+    <box id="wall_south" size="10,0.1,0.5" movable="false">
+      <body position="0,-5,0" orientation="0,0,0" />
     </box>
-    <box id="wall_east" size="0.1,20,0.3" movable="false">
-      <body position="10,0,0" orientation="0,0,0" />
+    <box id="wall_east" size="0.1,10,0.5" movable="false">
+      <body position="5,0,0" orientation="0,0,0" />
     </box>
-    <box id="wall_west" size="0.1,20,0.3" movable="false">
-      <body position="-10,0,0" orientation="0,0,0" />
+    <box id="wall_west" size="0.1,10,0.5" movable="false">
+      <body position="-5,0,0" orientation="0,0,0" />
     </box>
 
     <!-- ================================================================
-         10 ROBOT SINH RA NGAY TRÊN 10 DOCK SẠC HAI BIÊN (5 trái + 5 phải)
-         Dock trái  cột 0  (x=-9.5), hướng 0°   (nhìn vào trung tâm kho)
-         Dock phải  cột 19 (x=+9.5), hướng 180° (nhìn vào trung tâm kho)
-         Hàng dock: 3,6,9,12,15 -> y = -6.5,-3.5,-0.5,+2.5,+5.5
-         (khớp DockCell() trong grid_layout.h — đổi bên này phải đổi bên kia)
+         3 HÀNG NGĂN XẾP = VẬT CẢN VẬT LÝ CỨNG (movable="false"), chặn
+         triệt để robot đi xuyên qua kho hàng. Dồn lên khu vực PHÍA TRÊN
+         bản đồ (Row=38/42/46 trong grid_layout.h, chỉ cách nhau 4 Row —
+         3 Row hành lang giữa 2 kệ liền nhau), trải dài Col=10..39
+         (30 ô = 6.0 m). QUAN TRỌNG: kích thước box "size=X,Y,Z" — dải
+         vật cản MỎNG theo trục X (1 ô Row = 0.2m) và DÀI theo trục Y
+         (30 ô Col = 6.0m), vì công thức ánh xạ của đề bài quy định
+         Row~trục X, Col~trục Y. size="0.2,6.0,0.5" (không phải
+         "6.0,0.2,0.5" như văn bản đề — đã đảo lại cho khớp đúng ngữ
+         nghĩa Row cố định/Col trải dài mà chính đề bài mô tả 3 lần).
+         Tọa độ x = RowToWorldX(Row) = -5.0+(Row+0.5)*0.2. -->
+    <box id="stack_row_1" size="0.2,6.0,0.5" movable="false">
+      <body position="2.7,0.0,0" orientation="0,0,0" />
+    </box>
+    <box id="stack_row_2" size="0.2,6.0,0.5" movable="false">
+      <body position="3.5,0.0,0" orientation="0,0,0" />
+    </box>
+    <box id="stack_row_3" size="0.2,6.0,0.5" movable="false">
+      <body position="4.3,0.0,0" orientation="0,0,0" />
+    </box>
 
-         Pin: xả TUYẾN TÍNH THEO THỜI GIAN DI CHUYỂN (time_motion) do
-         loop functions thực hiện mỗi tick:
-           delta = time_factor + pos_factor * |quãng đường tick này|
-         (model time_motion cài sẵn của ARGoS dính lỗi NaN trong
-         ToAngleAxis nên phần xả được tính ở loop functions với cùng
-         công thức; delta="0.0" tắt phần xả nội bộ của entity.)
-         start_charge rải 0.65..1.0 để các chu kỳ sạc so le nhau;
-         fb2/fb7 sinh ra DƯỚI ngưỡng 70% -> phải sạc xong mới được nhận việc.
+    <!-- ================================================================
+         10 ROBOT SINH RA NGAY TRÊN 10 DOCK SẠC (Row 22-26 mỗi biên):
+         Tây (Col=0, y=-4.9): fb0..fb4, hướng +Y (yaw=90°, nhìn vào kho)
+         Đông(Col=49, y=+4.9): fb5..fb9, hướng -Y (yaw=-90°, nhìn vào kho)
+         Tọa độ x tính đúng công thức RowToWorldX(Row) cho Row=22..26.
+         start_charge (đơn vị 0..10000, full_charge=10000) rải so le —
+         fb2/fb7 sinh ra DƯỚI ngưỡng 70% nên phải sạc xong mới nhận việc.
          ================================================================ -->
-    <foot-bot id="fb0" rab_range="3" rab_data_size="16">
-      <body position="-9.5,-6.5,0" orientation="0,0,0" />
+    <foot-bot id="fb0" rab_range="2.5" rab_data_size="16">
+      <body position="-0.5,-4.9,0" orientation="90,0,0" />
       <controller config="fgc" />
-      <battery discharge_model="time" delta="0.0" full_charge="1.0" start_charge="1.0" />
+      <battery discharge_model="time" delta="0.0" full_charge="10000.0" start_charge="10000.0" />
     </foot-bot>
-    <foot-bot id="fb1" rab_range="3" rab_data_size="16">
-      <body position="-9.5,-3.5,0" orientation="0,0,0" />
+    <foot-bot id="fb1" rab_range="2.5" rab_data_size="16">
+      <body position="-0.3,-4.9,0" orientation="90,0,0" />
       <controller config="fgc" />
-      <battery discharge_model="time" delta="0.0" full_charge="1.0" start_charge="0.85" />
+      <battery discharge_model="time" delta="0.0" full_charge="10000.0" start_charge="8500.0" />
     </foot-bot>
-    <foot-bot id="fb2" rab_range="3" rab_data_size="16">
-      <body position="-9.5,-0.5,0" orientation="0,0,0" />
+    <foot-bot id="fb2" rab_range="2.5" rab_data_size="16">
+      <body position="-0.1,-4.9,0" orientation="90,0,0" />
       <controller config="fgc" />
-      <battery discharge_model="time" delta="0.0" full_charge="1.0" start_charge="0.68" />
+      <battery discharge_model="time" delta="0.0" full_charge="10000.0" start_charge="6800.0" />
     </foot-bot>
-    <foot-bot id="fb3" rab_range="3" rab_data_size="16">
-      <body position="-9.5,2.5,0" orientation="0,0,0" />
+    <foot-bot id="fb3" rab_range="2.5" rab_data_size="16">
+      <body position="0.1,-4.9,0" orientation="90,0,0" />
       <controller config="fgc" />
-      <battery discharge_model="time" delta="0.0" full_charge="1.0" start_charge="0.9" />
+      <battery discharge_model="time" delta="0.0" full_charge="10000.0" start_charge="9000.0" />
     </foot-bot>
-    <foot-bot id="fb4" rab_range="3" rab_data_size="16">
-      <body position="-9.5,5.5,0" orientation="0,0,0" />
+    <foot-bot id="fb4" rab_range="2.5" rab_data_size="16">
+      <body position="0.3,-4.9,0" orientation="90,0,0" />
       <controller config="fgc" />
-      <battery discharge_model="time" delta="0.0" full_charge="1.0" start_charge="0.75" />
+      <battery discharge_model="time" delta="0.0" full_charge="10000.0" start_charge="7500.0" />
     </foot-bot>
-    <foot-bot id="fb5" rab_range="3" rab_data_size="16">
-      <body position="9.5,-6.5,0" orientation="180,0,0" />
+    <foot-bot id="fb5" rab_range="2.5" rab_data_size="16">
+      <body position="-0.5,4.9,0" orientation="-90,0,0" />
       <controller config="fgc" />
-      <battery discharge_model="time" delta="0.0" full_charge="1.0" start_charge="0.95" />
+      <battery discharge_model="time" delta="0.0" full_charge="10000.0" start_charge="9500.0" />
     </foot-bot>
-    <foot-bot id="fb6" rab_range="3" rab_data_size="16">
-      <body position="9.5,-3.5,0" orientation="180,0,0" />
+    <foot-bot id="fb6" rab_range="2.5" rab_data_size="16">
+      <body position="-0.3,4.9,0" orientation="-90,0,0" />
       <controller config="fgc" />
-      <battery discharge_model="time" delta="0.0" full_charge="1.0" start_charge="0.8" />
+      <battery discharge_model="time" delta="0.0" full_charge="10000.0" start_charge="8000.0" />
     </foot-bot>
-    <foot-bot id="fb7" rab_range="3" rab_data_size="16">
-      <body position="9.5,-0.5,0" orientation="180,0,0" />
+    <foot-bot id="fb7" rab_range="2.5" rab_data_size="16">
+      <body position="-0.1,4.9,0" orientation="-90,0,0" />
       <controller config="fgc" />
-      <battery discharge_model="time" delta="0.0" full_charge="1.0" start_charge="0.65" />
+      <battery discharge_model="time" delta="0.0" full_charge="10000.0" start_charge="6500.0" />
     </foot-bot>
-    <foot-bot id="fb8" rab_range="3" rab_data_size="16">
-      <body position="9.5,2.5,0" orientation="180,0,0" />
+    <foot-bot id="fb8" rab_range="2.5" rab_data_size="16">
+      <body position="0.1,4.9,0" orientation="-90,0,0" />
       <controller config="fgc" />
-      <battery discharge_model="time" delta="0.0" full_charge="1.0" start_charge="1.0" />
+      <battery discharge_model="time" delta="0.0" full_charge="10000.0" start_charge="10000.0" />
     </foot-bot>
-    <foot-bot id="fb9" rab_range="3" rab_data_size="16">
-      <body position="9.5,5.5,0" orientation="180,0,0" />
+    <foot-bot id="fb9" rab_range="2.5" rab_data_size="16">
+      <body position="0.3,4.9,0" orientation="-90,0,0" />
       <controller config="fgc" />
-      <battery discharge_model="time" delta="0.0" full_charge="1.0" start_charge="0.72" />
+      <battery discharge_model="time" delta="0.0" full_charge="10000.0" start_charge="7200.0" />
     </foot-bot>
 
   </arena>
@@ -176,9 +189,9 @@
     <qt-opengl>
       <camera>
         <placements>
-          <placement index="0" position="0,0,21" look_at="0,0,0" up="0,1,0"
+          <placement index="0" position="0,0,11" look_at="0,0,0" up="1,0,0"
                      lens_focal_length="20" />
-          <placement index="1" position="0,-17,13" look_at="0,0,0"
+          <placement index="1" position="0,-8,6" look_at="0,0,0"
                      lens_focal_length="20" />
         </placements>
       </camera>

@@ -1,13 +1,14 @@
 /**
  * footbot_grid_nav.cpp — ĐỊNH VỊ + TÌM ĐƯỜNG + BÁM TÂM Ô
  *
- * 1. UpdateLocalization : dead-reckoning từ encoder 2 bánh, và "đọc mã
- *    QR sàn" (đĩa đen ở hồng tâm ô, bắt bằng cảm biến sàn) để XÓA SẠCH
- *    sai số trôi tích lũy về 0 mỗi lần ngang qua tâm ô.
- * 2. PlanPath           : A* 4 hướng trên ma trận 20x20, phạt cua rẽ để
- *    robot ưu tiên chạy thẳng theo làn.
- * 3. ApplySteering      : bộ điều khiển TỶ LỆ cho hệ vi sai, kéo robot
- *    về đúng hồng tâm ô kế tiếp.
+ * 1. UpdateLocalization : dead-reckoning encoder, chốt lại bằng "QR sàn"
+ *    (đĩa đen r=0.02 m ở hồng tâm ô) khi robot lọt vào đúng bán kính
+ *    0.02 m quanh tâm — khớp chính xác yêu cầu đề bài.
+ * 2. PlanPath            : A* 4 hướng trên lưới 50x50, CẤM TUYỆT ĐỐI ô
+ *    CELL_OBSTACLE (thân ngăn xếp — vật cản vật lý thật ngoài .argos).
+ * 3. ApplySteering        : bộ điều khiển tỷ lệ; V_Base = 10 cm/s chạy
+ *    thẳng, hạ còn 3 cm/s khi bẻ lái > 55° (rẽ 90° tại tâm ô) để chống
+ *    trượt bánh trong ô chỉ rộng 0.2 m.
  */
 
 #include "footbot_grid.h"
@@ -26,23 +27,15 @@ namespace argos {
 void CFootBotGrid::UpdateLocalization() {
 
    /* ------------------------------------------------------------------
-    * A. DEAD-RECKONING (odometry bánh xe — NGUỒN DUY NHẤT khi đang chạy
-    *    giữa hai vạch QR, và là nơi sai số trượt bánh tích lũy dần):
-    *
-    *      dL, dR : quãng đường 2 bánh lăn được trong tick [m]
-    *      ds  = (dL + dR) / 2          — tịnh tiến của tâm robot
-    *      dth = (dR - dL) / L          — góc xoay (L = khoảng cách 2 bánh)
-    *
-    *    Tích phân trung điểm (midpoint) cho sai số nhỏ hơn Euler thuần:
-    *      x   += ds * cos(theta + dth/2)
-    *      y   += ds * sin(theta + dth/2)
-    *      theta = chuẩn hóa(theta + dth)
+    * A. DEAD-RECKONING (odometry bánh xe — nguồn duy nhất giữa 2 lần
+    *    chốt QR; tích phân trung điểm cho sai số nhỏ hơn Euler thuần):
+    *      ds  = (dL + dR) / 2          dth = (dR - dL) / L
+    *      x  += ds * cos(theta + dth/2)   y += ds * sin(theta + dth/2)
     * ------------------------------------------------------------------ */
    if(m_bPoseInit) {
       const CCI_DifferentialSteeringSensor::SReading& sOdo =
          m_pcWheelsSens->GetReading();
-      /* ARGoS trả các quãng đường bằng cm -> đổi sang m */
-      Real fDL   = sOdo.CoveredDistanceLeftWheel  * 0.01;
+      Real fDL   = sOdo.CoveredDistanceLeftWheel  * 0.01;   /* cm -> m */
       Real fDR   = sOdo.CoveredDistanceRightWheel * 0.01;
       Real fAxis = sOdo.WheelAxisLength           * 0.01;
       if(fAxis > 1e-4) m_fAxisM = fAxis;
@@ -57,18 +50,13 @@ void CFootBotGrid::UpdateLocalization() {
    }
 
    /* ------------------------------------------------------------------
-    * B. CHỐT VỊ TRÍ BẰNG "MÃ QR SÀN" (xóa hoàn toàn odometry drift):
-    *
-    * Mỗi hồng tâm ô có một đĩa ĐEN bán kính 10 cm do Loop Functions vẽ
-    * lên sàn. Bốn cảm biến sàn của foot-bot đọc độ xám: giá trị < 0.08
-    * chỉ có thể là đĩa đen (mọi màu khác trên sàn được chọn sáng hơn
-    * hẳn). Khi (1) thấy đĩa đen, (2) ước lượng đang ở gần tâm ô nào đó
-    * (< 0.35 m — cổng an toàn chống nhiễu), và (3) chưa chốt trong ô
-    * này, robot "giải mã QR": lấy tư thế tuyệt đối (x, y, góc) từ cảm
-    * biến positioning — mô phỏng việc camera gầm đọc ra tư thế in trong
-    * mã — và GHI ĐÈ lên ước lượng, đưa sai số tích lũy VỀ 0. Nhờ vậy
-    * robot luôn chạy thẳng tắp theo làn lưới vuông vắn.
-    * ------------------------------------------------------------------ */
+    * B. CHỐT VỊ TRÍ BẰNG "MÃ QR SÀN" — xóa hoàn toàn odometry drift.
+    * Đĩa đen bán kính 0.02 m ở hồng tâm mọi ô (grid_floor_render.cpp).
+    * Cảm biến sàn đọc độ xám < 0.08 chỉ có thể là đĩa đen. Khi (1) thấy
+    * đĩa đen, (2) ước lượng vị trí đang trong đúng bán kính 0.02 m
+    * quanh tâm ô gần nhất, (3) chưa chốt trong ô này -> "giải mã QR":
+    * lấy tư thế tuyệt đối từ positioning, GHI ĐÈ ước lượng, đưa sai số
+    * tích lũy VỀ 0. ------------------------------------------------- */
    const CCI_FootBotMotorGroundSensor::TReadings& tGround =
       m_pcGround->GetReadings();
    Real fDarkest = 1.0;
@@ -85,31 +73,30 @@ void CFootBotGrid::UpdateLocalization() {
    };
 
    if(!m_bPoseInit) {
-      /* Tick đầu tiên: robot đứng ngay trên dock (có QR) -> chốt luôn */
+      /* Tick đầu: robot đứng ngay trên dock (có QR) -> chốt luôn */
       SnapFromMarker();
       m_bPoseInit = true;
-      m_sCurCell  = SGridCell(WorldYToRow(m_cEstPos.GetY()),
-                              WorldXToCol(m_cEstPos.GetX()));
+      m_sCurCell  = SGridCell(WorldXToRow(m_cEstPos.GetX()),
+                              WorldYToCol(m_cEstPos.GetY()));
       m_sPrevCell = m_sCurCell;
       m_sLastSnapCell = m_sCurCell;
       return;
    }
 
-   SGridCell sNearest(WorldYToRow(m_cEstPos.GetY()),
-                      WorldXToCol(m_cEstPos.GetX()));
-   CVector2 cCenter(ColToWorldX(sNearest.Col), RowToWorldY(sNearest.Row));
+   SGridCell sNearest(WorldXToRow(m_cEstPos.GetX()),
+                      WorldYToCol(m_cEstPos.GetY()));
+   CVector2 cCenter(RowToWorldX(sNearest.Row), ColToWorldY(sNearest.Col));
    Real fDistCenter = (m_cEstPos - cCenter).Length();
 
-   if(fDarkest < 0.08 && fDistCenter < 0.35 && sNearest != m_sLastSnapCell) {
+   if(fDarkest < 0.08 && fDistCenter <= m_fQrSnapRadius && sNearest != m_sLastSnapCell) {
       SnapFromMarker();
       m_sLastSnapCell = sNearest;
       ++m_unSnapCount;
    }
-   else if(m_fOdoSinceFix > 3.0) {
-      /* Lưới dày 1 m mà chạy 3 m chưa gặp QR nào = đã lạc khỏi làn.
-       * Robot thật sẽ chạy thủ tục quét tìm mã gần nhất; trong mô
-       * phỏng ta tái định vị thẳng và đếm sự kiện để lộ ra khi tham
-       * số nhiễu/điều khiển chỉnh sai. */
+   else if(m_fOdoSinceFix > 0.6) {
+      /* Lưới dày 0.2 m mà trôi 0.6 m (3 ô) chưa gặp QR nào = đã lạc
+       * khỏi làn -> tái định vị cứu hộ, đếm sự kiện để lộ lỗi tinh
+       * chỉnh nếu số này khác 0 trong báo cáo cuối. */
       SnapFromMarker();
       ++m_unRelocCount;
    }
@@ -119,28 +106,26 @@ void CFootBotGrid::UpdateLocalization() {
 /****************************************/
 
 bool CFootBotGrid::PlanPath(const SGridCell& s_goal, UInt32 un_avoid_level) {
-   /* A* 4 hướng trên ma trận 20x20.
+   /* A* 4 hướng trên lưới 50x50. CELL_OBSTACLE (thân ngăn xếp) CẤM
+    * TUYỆT ĐỐI dù có phải ô đích hay không — đích hợp lệ chỉ có thể là
+    * CELL_FREE / CELL_DOCK / CELL_CONVEYOR (SetGoal() không bao giờ
+    * trỏ vào CELL_OBSTACLE, nhưng vẫn chặn cứng ở đây để phòng thủ).
     *
-    * Quy tắc đi lại: chỉ ô CELL_FREE là công cộng; các ô dịch vụ
-    * (dock / băng chuyền / ngăn xếp) là "ngõ cụt riêng" — CHỈ robot có
-    * đích đúng ô đó mới được bước vào, nên luồng giao thông không bao
-    * giờ xuyên qua trạm của robot khác.
-    *
-    * Mức né động (leo thang khi bị chặn lâu):
-    *   0 - chỉ tránh vật cản tĩnh (tin vào đặt chỗ + nhường đường)
-    *   1 - né thêm các ô đang bị robot khác ĐẶT CHỖ trong bán kính 8 ô
-    *   2 - né thêm ô hiện tại + ô dự định của mọi hàng xóm RAB
-    * -> nhờ vậy robot kẹt ở hành lang này sẽ tự vòng sang hành lang kia. */
+    * Mức né động (leo thang khi bị chặn lâu — chỉ dùng khi DẠT LÀN
+    * CỤC BỘ 3 BƯỚC đã thất bại cả hai phía, xem footbot_grid_traffic.cpp):
+    *   0 - chỉ né vật cản tĩnh (tin vào đặt chỗ + dạt làn)
+    *   1 - né thêm ô đang bị robot khác ĐẶT CHỖ trong bán kính 6 ô
+    *   2 - né thêm ô hiện tại + ô dự định của mọi hàng xóm RAB       */
 
    constexpr SInt32 N = GRID_ROWS * GRID_COLS;
-   auto Idx  = [](const SGridCell& c) { return c.Row * GRID_COLS + c.Col; };
+   auto Idx = [](const SGridCell& c) { return c.Row * GRID_COLS + c.Col; };
 
    std::array<bool, N> arrAvoid{};
    if(un_avoid_level >= 1) {
       for(SInt32 r = 0; r < GRID_ROWS; ++r)
          for(SInt32 c = 0; c < GRID_COLS; ++c) {
             SGridCell sCell(r, c);
-            if(sCell.ManhattanTo(m_sCurCell) > 8) continue;
+            if(sCell.ManhattanTo(m_sCurCell) > 6) continue;
             SInt32 nOwner = LF().CellReserver(sCell);
             if(nOwner >= 0 && nOwner != (SInt32)m_unId)
                arrAvoid[Idx(sCell)] = true;
@@ -152,21 +137,20 @@ bool CFootBotGrid::PlanPath(const SGridCell& s_goal, UInt32 un_avoid_level) {
          if(sN.Next.IsValid()) arrAvoid[Idx(sN.Next)] = true;
       }
    }
-   arrAvoid[Idx(m_sCurCell)] = false;   /* không bao giờ tự khóa mình */
+   arrAvoid[Idx(m_sCurCell)] = false;
 
    auto Passable = [&](const SGridCell& c) {
       if(!c.IsValid()) return false;
+      if(CellTypeOf(c) == CELL_OBSTACLE) return false;   /* cấm tuyệt đối */
       if(arrAvoid[Idx(c)] && !(c == s_goal)) return false;
       EGridCellType e = CellTypeOf(c);
       return e == CELL_FREE || c == s_goal;
    };
 
-   /* Bảng trạng thái A* cỡ nhỏ — 400 ô nên không cần heap phức tạp */
    std::array<Real,   N> arrG;      arrG.fill(1.0e9);
    std::array<SInt32, N> arrParent; arrParent.fill(-1);
    std::array<SInt8,  N> arrDir;    arrDir.fill(-1);
    std::array<bool,   N> arrClosed{};
-   /* 4 hướng: Đông, Bắc, Tây, Nam (dRow, dCol) */
    const SInt32 DR[4] = { 0, 1, 0, -1 };
    const SInt32 DC[4] = { 1, 0, -1, 0 };
 
@@ -179,7 +163,6 @@ bool CFootBotGrid::PlanPath(const SGridCell& s_goal, UInt32 un_avoid_level) {
    std::vector<SInt32> vecOpen{ nStart };
 
    while(!vecOpen.empty()) {
-      /* lấy nút có f = g + h nhỏ nhất */
       size_t unBest = 0;
       Real fBestF = 1.0e18;
       for(size_t i = 0; i < vecOpen.size(); ++i) {
@@ -201,7 +184,6 @@ bool CFootBotGrid::PlanPath(const SGridCell& s_goal, UInt32 un_avoid_level) {
          if(!Passable(sNb)) continue;
          SInt32 nNb = Idx(sNb);
          if(arrClosed[nNb]) continue;
-         /* phạt 0.35 cho mỗi lần đổi hướng -> chuộng đường thẳng theo làn */
          Real fTurn = (arrDir[nCur] >= 0 && arrDir[nCur] != d) ? 0.35 : 0.0;
          Real fNewG = arrG[nCur] + 1.0 + fTurn;
          if(fNewG < arrG[nNb]) {
@@ -213,9 +195,8 @@ bool CFootBotGrid::PlanPath(const SGridCell& s_goal, UInt32 un_avoid_level) {
       }
    }
 
-   if(arrParent[nGoal] < 0) return false;   /* không có đường */
+   if(arrParent[nGoal] < 0) return false;
 
-   /* Lần ngược cha -> con, bỏ ô xuất phát */
    std::vector<SGridCell> vecRev;
    for(SInt32 n = nGoal; n != nStart; n = arrParent[n])
       vecRev.emplace_back(n / GRID_COLS, n % GRID_COLS);
@@ -230,26 +211,22 @@ bool CFootBotGrid::PlanPath(const SGridCell& s_goal, UInt32 un_avoid_level) {
 
 void CFootBotGrid::ApplySteering(const CVector2& c_target, bool b_final) {
    /* ------------------------------------------------------------------
-    * BỘ ĐIỀU KHIỂN BẺ LÁI TỶ LỆ (P) BÁM TÂM Ô — cho hệ vi sai 2 bánh
+    * BỘ ĐIỀU KHIỂN BẺ LÁI TỶ LỆ (P) BÁM TÂM Ô — hệ vi sai 2 bánh
     *
-    *   sai số vị trí :  e   = tâm_ô_kế_tiếp - vị_trí_ước_lượng
-    *   góc mong muốn :  psi = atan2(e.y, e.x)
-    *   sai số hướng  :  err = chuẩn_hóa(psi - theta)  ∈ (-pi, pi]
+    *   e = tâm_ô_kế_tiếp - vị_trí_ước_lượng ; psi = atan2(e.y, e.x)
+    *   err = chuẩn_hóa(psi - theta) ∈ (-pi, pi]
     *
-    * 1) |err| lớn hơn ngưỡng cua gắt (65°): XOAY TẠI CHỖ — hai bánh
-    *    quay ngược chiều nhau (+/- turn_speed). Robot chỉ rẽ vuông góc
-    *    ngay trên hồng tâm ô, giữ đội hình lưới vuông vắn.
+    * 1) |err| > 55° (rẽ 90° tại tâm ô, đổi làn/hành lang/dạt làn):
+    *    XOAY TẠI CHỖ với V_Base HẠ CÒN 3 cm/s (m_fPivotSpeed) — bắt
+    *    buộc theo đề bài để chống trượt bánh vật lý trong ô 0.2 m.
     *
-    * 2) Ngược lại: chạy tới với luật tỷ lệ
-    *      v      = v_max * cos(err)          (lệch hướng -> tự giảm ga)
-    *      omega  = Kp * err                  (bẻ lái tỷ lệ với sai số)
-    *      v_trái  = v - omega * L/2
-    *      v_phải  = v + omega * L/2
-    *    Thành phần omega kéo mũi robot về thẳng hàng với tâm ô, nên mọi
-    *    sai lệch ngang do trượt bánh đều bị "hút" trở lại trục làn.
+    * 2) Ngược lại: chạy tới với luật tỷ lệ, V_Base = 10 cm/s
+    *    (m_fCruiseSpeed):
+    *      v = V_Base * cos(err) ; omega = Kp * err
+    *      v_trái = v - omega*L/2 ; v_phải = v + omega*L/2
     *
-    * 3) b_final (ô đích cuối): thêm phanh tỷ lệ theo khoảng cách
-    *    v <= 300 * dist [cm/s] để dừng êm đúng hồng tâm, không vượt lố.
+    * 3) b_final (waypoint là ô đích cuối): phanh tỷ lệ theo khoảng
+    *    cách để dừng êm đúng hồng tâm (goal_tol = 0.02 m).
     * ------------------------------------------------------------------ */
    CVector2 cDelta = c_target - m_cEstPos;
    Real     fDist  = cDelta.Length();
@@ -257,25 +234,23 @@ void CFootBotGrid::ApplySteering(const CVector2& c_target, bool b_final) {
    cErr.SignedNormalize();
 
    if(Abs(cErr) > m_cHardTurn) {
-      Real fS = (cErr.GetValue() > 0.0) ? m_fTurnSpeed : -m_fTurnSpeed;
+      Real fS = (cErr.GetValue() > 0.0) ? m_fPivotSpeed : -m_fPivotSpeed;
       m_pcWheels->SetLinearVelocity(-fS, fS);
       return;
    }
 
-   Real fV = m_fMaxSpeed * Max<Real>(0.15, Cos(cErr));
+   Real fV = m_fCruiseSpeed * Max<Real>(0.15, Cos(cErr));
    if(b_final) fV = Min(fV, 300.0 * fDist);
-   fV = Max<Real>(fV, 3.0);
+   fV = Max<Real>(fV, 1.0);
 
-   /* omega [rad/s] -> chênh lệch vận tốc bánh [cm/s] */
    Real fOmega = m_fKpHeading * cErr.GetValue();
    Real fDiff  = fOmega * (m_fAxisM * 0.5) * 100.0;
    Real fVL    = fV - fDiff;
    Real fVR    = fV + fDiff;
-   /* kẹp trong khả năng động cơ, giữ nguyên hiệu số lái nếu có thể */
-   Real fOver = Max(Max(fVL, fVR) - m_fMaxSpeed, 0.0);
+   Real fOver  = Max(Max(fVL, fVR) - m_fCruiseSpeed, 0.0);
    fVL -= fOver; fVR -= fOver;
-   fVL = Max(Min(fVL, m_fMaxSpeed), -m_fMaxSpeed);
-   fVR = Max(Min(fVR, m_fMaxSpeed), -m_fMaxSpeed);
+   fVL = Max(Min(fVL, m_fCruiseSpeed), -m_fCruiseSpeed);
+   fVR = Max(Min(fVR, m_fCruiseSpeed), -m_fCruiseSpeed);
    m_pcWheels->SetLinearVelocity(fVL, fVR);
 }
 

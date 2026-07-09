@@ -2,20 +2,17 @@
  * footbot_grid.h
  *
  * BỘ ĐIỀU KHIỂN PHI TẬP TRUNG cho một AMR (foot-bot vi sai) trong nhà
- * kho lưới 20x20. Mỗi robot tự mình:
+ * kho lưới mịn 50x50 (ô 0.2 m). Mỗi robot tự mình:
  *
- *   1. ĐỊNH VỊ: tích phân odometry từ encoder 2 bánh (có trôi), và XÓA
- *      SẠCH sai số mỗi lần cảm biến sàn bắt được đĩa đen ở hồng tâm ô
- *      (mô phỏng camera gầm đọc mã QR dán sàn) -> footbot_grid_nav.cpp
- *   2. QUYẾT ĐỊNH: máy trạng thái nhận việc / lấy hàng / giao hàng /
- *      về dock nghỉ / sạc khẩn cấp theo mô hình pin trễ (hysteresis
- *      20% - 70%) -> footbot_grid.cpp
- *   3. GIAO THÔNG: đặt chỗ ô kế tiếp trên bảng chiếm dụng chia sẻ,
- *      trao đổi mức ưu tiên qua RAB và tự nhường đường (đứng im hoặc
- *      dạt sang làn bên trong hành lang 2 ô) -> footbot_grid_traffic.cpp
- *
- * Loop Functions KHÔNG ra lệnh cho robot — nó chỉ là "bảng đen" ghi
- * nhận đặt chỗ và trạng thái hàng hóa. Mọi quyết định nằm ở đây.
+ *   1. ĐỊNH VỊ: dead-reckoning từ encoder 2 bánh (trôi), XÓA SẠCH sai
+ *      số khi cảm biến sàn bắt được đĩa QR ở hồng tâm ô (bán kính chốt
+ *      0.02 m) -> footbot_grid_nav.cpp
+ *   2. QUYẾT ĐỊNH: máy trạng thái nhiệm vụ + chính sách pin trễ
+ *      (hysteresis 20% khẩn cấp / 70% mới được rời dock) -> footbot_grid.cpp
+ *   3. GIAO THÔNG: đặt chỗ ô kế tiếp trên bảng chiếm dụng theo TICK,
+ *      trao đổi ưu tiên bất đối xứng qua RAB, và khi thua quyền thì
+ *      thực hiện DẠT LÀN CỤC BỘ 3 BƯỚC (không bao giờ vẽ lại đường
+ *      vòng xa qua A* toàn cục) -> footbot_grid_traffic.cpp
  */
 
 #ifndef FOOTBOT_GRID_H
@@ -40,7 +37,7 @@
 
 namespace argos {
 
-class CGridLoopFunctions;   /* bảng đen chia sẻ (khai báo trước)  */
+class CGridLoopFunctions;
 
 class CFootBotGrid : public CCI_Controller {
 
@@ -48,21 +45,21 @@ public:
 
    /* ---------------- Máy trạng thái nhiệm vụ ---------------- */
    enum EState : UInt8 {
-      STATE_CHARGING = 0,   /* đứng ở dock, đang sạc (khóa tới >= 70%)   */
-      STATE_IDLE_DOCK,      /* đậu ở dock, đủ pin, chờ có việc           */
-      STATE_TO_PICKUP,      /* chạy rỗng tới băng chuyền đã nhận         */
-      STATE_PICKING,        /* đứng ở băng chuyền, bốc hộp lên           */
-      STATE_TO_DELIVER,     /* CHỞ HÀNG tới ô ngăn xếp (ưu tiên 2)       */
-      STATE_DELIVERING,     /* đứng ở ô ngăn xếp, hạ hộp xuống           */
-      STATE_TO_REST,        /* hết việc, chạy về dock trống gần nhất     */
-      STATE_TO_CHARGE       /* KHẨN CẤP pin < 20%, chạy về dock (ưu tiên 1) */
+      STATE_IDLE = 0,          /* đậu ở dock, đủ pin (>=70%), chờ có việc  */
+      STATE_TO_PICKUP,         /* chạy rỗng tới băng chuyền đã nhận        */
+      STATE_PICKING,           /* đứng ở băng chuyền, bốc hộp lên          */
+      STATE_DELIVERING,        /* CHỞ HÀNG tới ô mặt kệ ngăn xếp (ưu tiên 2) */
+      STATE_DROPPING,          /* đứng ở mặt kệ, hạ hộp xuống              */
+      STATE_RETURNING,         /* hết việc, chạy về dock trống gần nhất    */
+      STATE_RESTING,           /* ngủ đông tại dock (idle > 100 tick), sạc thụ động */
+      STATE_EMERGENCY_CHARGE   /* pin<=20%: hủy việc, chạy về dock, sạc tới >=70% */
    };
 
-   /* ------------- Pha nhường đường (chồng lên FSM) ------------- */
-   enum EYieldPhase : UInt8 {
-      YIELD_NONE = 0,       /* lưu thông bình thường                     */
-      YIELD_SIDESTEP,       /* đang dạt sang ô bên cạnh để nhường làn    */
-      YIELD_WAIT_CLEAR      /* đã dạt xong, đứng im chờ robot ưu tiên qua */
+   /* ------------- Pha giao thông cục bộ (chồng lên FSM) ------------- */
+   enum ETrafficPhase : UInt8 {
+      TRAFFIC_NONE = 0,
+      TRAFFIC_DETOURING,    /* đang chạy 3 bước dạt làn (rẽ/song song/rẽ về) */
+      TRAFFIC_YIELDING      /* cả 2 ô bên đều nghẽn -> đứng im 1-2 tick     */
    };
 
    /* Nhiệm vụ đã nhận: cặp (băng chuyền có hộp, ô ngăn xếp cần màu đó) */
@@ -70,12 +67,12 @@ public:
       SInt32 ConveyorIdx = -1;
       SInt32 DemandIdx   = -1;
       UInt8  Color       = 0;
-      bool   HasBox      = false;  /* true = hộp đã nằm trên lưng robot */
+      bool   HasBox      = false;
+      bool   FarSide     = false;  /* mặt kệ đang nhắm: gần (-1) hay xa (+1) */
       bool   IsValid() const { return DemandIdx >= 0; }
-      void   Clear() { ConveyorIdx = -1; DemandIdx = -1; Color = 0; HasBox = false; }
+      void   Clear() { ConveyorIdx = -1; DemandIdx = -1; Color = 0; HasBox = false; FarSide = false; }
    };
 
-   /* Bản tin RAB đã giải mã của một robot hàng xóm */
    struct SNeighbor {
       UInt8     Id       = 255;
       UInt8     Prio     = PRIO_IDLE;
@@ -83,8 +80,8 @@ public:
       UInt8     Flags    = 0;
       UInt8     Batt     = 0;
       SGridCell Cur;
-      SGridCell Next;          /* .IsValid()==false nếu đang đứng yên   */
-      Real      Range    = 0.0; /* khoảng cách [m]                       */
+      SGridCell Next;
+      Real      Range    = 0.0;
    };
 
 public:
@@ -105,10 +102,10 @@ public:
    bool        IsCarrying()      const { return m_sTask.HasBox; }
    UInt8       GetCarriedColor() const { return m_sTask.Color; }
    Real        GetBatteryFrac()  const { return m_fBattery; }
-   bool        IsYielding()      const { return m_eYield != YIELD_NONE; }
-   UInt32      GetSnapCount()    const { return m_unSnapCount; }
-   UInt32      GetRelocCount()   const { return m_unRelocCount; }
-   UInt32      GetSidestepCount() const { return m_unSidestepCount; }
+   bool        IsInTraffic()     const { return m_eTraffic != TRAFFIC_NONE; }
+   UInt32      GetSnapCount()      const { return m_unSnapCount; }
+   UInt32      GetRelocCount()     const { return m_unRelocCount; }
+   UInt32      GetDetourCount()    const { return m_unDetourCount; }
    const SGridCell& GetCurCell() const { return m_sCurCell; }
    const std::vector<SGridCell>& GetPath() const { return m_vecPath; }
 
@@ -117,29 +114,29 @@ private:
    /* ============ footbot_grid.cpp : FSM + nhiệm vụ + pin ============ */
    void RunStateMachine();
    void CheckBatteryEmergency();
-   bool TryClaimBestTask();          /* robot TỰ chọn việc, bảng đen chỉ ghi nhận */
-   void AfterTaskDone();             /* tìm việc mới hoặc về dock nghỉ    */
+   bool TryClaimBestTask();
+   void AfterTaskDone();
    bool RetargetDock(bool b_must_find);
    void SetGoal(const SGridCell& s_cell);
    void UpdateLed();
 
    /* ============ footbot_grid_nav.cpp : định vị + A* + bám tâm ô ==== */
-   void UpdateLocalization();        /* odometry + chốt lại bằng QR sàn  */
+   void UpdateLocalization();
    bool PlanPath(const SGridCell& s_goal, UInt32 un_avoid_level);
-   void ApplySteering(const CVector2& c_target, bool b_final);
+   void ApplySteering(const CVector2& c_target, bool b_pivot_turn);
    void StopWheels();
 
-   /* ============ footbot_grid_traffic.cpp : đặt chỗ + nhường đường == */
-   void StepMovement();              /* vòng ngoài: đi theo path đã đặt chỗ */
+   /* ============ footbot_grid_traffic.cpp : đặt chỗ + dạt làn ======== */
+   void StepMovement();
    void ParseNeighbors();
    void BroadcastState();
    bool IWinAgainst(const SNeighbor& s_n) const;
-   bool TrySidestep(const SNeighbor& s_opp, const SGridCell& s_blocked);
+   bool TryStartDetour(const SGridCell& s_blocked);
+   void HandleDetourPhase();
    void HandleYieldPhase();
    void KeepAliveReservation();
    SGridCell PlannedNextCell() const;
 
-   /* Bảng đen chia sẻ — lấy trễ ở tick đầu (LF khởi tạo sau controller) */
    CGridLoopFunctions& LF();
 
 private:
@@ -157,65 +154,69 @@ private:
    CGridLoopFunctions*               m_pcLF         = nullptr;
 
    /* ----------------------- Tham số XML ----------------------- */
-   Real m_fMaxSpeed    = 25.0;  /* tốc độ hành trình [cm/s]              */
-   Real m_fTurnSpeed   = 12.0;  /* tốc độ bánh khi xoay tại chỗ [cm/s]   */
-   Real m_fKpHeading   = 3.5;   /* hệ số P bẻ lái theo sai số góc        */
-   CRadians m_cHardTurn;        /* ngưỡng xoay tại chỗ (mặc định 65 độ)  */
-   Real m_fWaypointTol = 0.08;  /* [m] coi như đã chạm tâm ô trung gian  */
-   Real m_fGoalTol     = 0.05;  /* [m] dừng hẳn tại tâm ô đích           */
-   Real m_fLowBatt     = 0.20;  /* ngưỡng xả cứng: bỏ việc đi sạc        */
-   Real m_fLeaveBatt   = 0.70;  /* ngưỡng sạc cứng: đủ mới được rời dock */
-   UInt32 m_unPickTicks = 15;   /* thời gian bốc hộp (tick)              */
-   UInt32 m_unDropTicks = 15;   /* thời gian hạ hộp (tick)               */
+   /* V_Base: 10 cm/s chạy thẳng, 3 cm/s khi bẻ lái 90 độ tại tâm ô
+    * (yêu cầu tường minh, chống trượt bánh khi quay gấp trong ô 0.2m) */
+   Real m_fCruiseSpeed = 10.0;   /* V_Base chạy thẳng [cm/s]              */
+   Real m_fPivotSpeed  = 3.0;    /* V_Base khi rẽ 90 độ tại tâm ô [cm/s]  */
+   Real m_fKpHeading   = 3.5;
+   CRadians m_cHardTurn;         /* ngưỡng coi là "rẽ 90 độ" (mặc định 55 độ) */
+   Real m_fWaypointTol = 0.02;   /* [m] coi như đã chạm tâm ô trung gian  */
+   Real m_fGoalTol     = 0.02;   /* [m] dừng hẳn tại tâm ô đích           */
+   Real m_fQrSnapRadius = 0.02;  /* [m] bán kính "đọc được QR sàn" — khớp đề bài */
+   Real m_fLowBatt     = 0.20;   /* ngưỡng xả cứng: bỏ việc đi sạc khẩn cấp */
+   Real m_fLeaveBatt   = 0.70;   /* ngưỡng sạc cứng: đủ mới được rời dock */
+   UInt32 m_unPickTicks = 15;
+   UInt32 m_unDropTicks = 15;
+   UInt32 m_unIdleRestTimeout = 100;  /* idle > 100 tick -> về dock ngủ đông */
 
    /* ----------------------- Định danh ----------------------- */
-   UInt8  m_unId = 0;           /* rút từ "fbN"                          */
+   UInt8  m_unId = 0;
 
    /* ----------------------- Định vị ----------------------- */
-   CVector2  m_cEstPos;         /* ước lượng (x,y) từ odometry [m]       */
-   CRadians  m_cEstYaw;         /* ước lượng góc hướng                   */
+   CVector2  m_cEstPos;
+   CRadians  m_cEstYaw;
    bool      m_bPoseInit = false;
-   Real      m_fAxisM    = 0.14;      /* khoảng cách 2 bánh [m]          */
-   Real      m_fOdoSinceFix = 0.0;    /* quãng đường từ lần chốt QR cuối */
-   SGridCell m_sLastSnapCell;         /* chống chốt lặp trong cùng một ô */
-   UInt32    m_unSnapCount  = 0;      /* số lần xóa trôi nhờ QR sàn      */
-   UInt32    m_unRelocCount = 0;      /* số lần cứu hộ vì lạc > 3 m      */
+   Real      m_fAxisM    = 0.14;
+   Real      m_fOdoSinceFix = 0.0;
+   SGridCell m_sLastSnapCell;
+   UInt32    m_unSnapCount  = 0;
+   UInt32    m_unRelocCount = 0;
 
    /* ----------------------- Pin ----------------------- */
-   Real m_fBattery = 1.0;       /* phân số 0..1 từ cảm biến pin          */
+   Real m_fBattery = 1.0;
 
    /* ----------------------- Nhiệm vụ / FSM ----------------------- */
-   EState m_eState = STATE_CHARGING;
+   EState m_eState = STATE_RESTING;
    STask  m_sTask;
-   UInt32 m_unActionTimer = 0;  /* đếm lùi bốc/hạ hộp                    */
-   SInt32 m_nTargetDock   = -1; /* dock đang nhắm về (nghỉ hoặc sạc)     */
+   UInt32 m_unActionTimer = 0;
+   UInt32 m_unIdleTicks   = 0;    /* đếm liên tục ở STATE_IDLE cho ngưỡng 100 tick */
+   SInt32 m_nTargetDock   = -1;
    bool   m_bFirstStep    = true;
 
    /* ----------------------- Điều hướng ----------------------- */
-   SGridCell m_sCurCell;        /* ô "logic" robot đang sở hữu           */
-   SGridCell m_sPrevCell;       /* ô vừa rời (ứng viên lùi khi kẹt)      */
+   SGridCell m_sCurCell;
+   SGridCell m_sPrevCell;
    SGridCell m_sGoalCell;
    bool      m_bHaveGoal    = false;
    bool      m_bGoalReached = false;
-   std::vector<SGridCell> m_vecPath;  /* chuỗi ô từ sau ô hiện tại tới đích */
+   std::vector<SGridCell> m_vecPath;
    UInt32    m_unPathIdx    = 0;
-   SGridCell m_sPathGoal;             /* đích mà path hiện có phục vụ     */
+   SGridCell m_sPathGoal;
 
-   /* ----------------------- Giao thông ----------------------- */
+   /* ----------------------- Giao thông cục bộ ----------------------- */
    std::vector<SNeighbor> m_vecNeighbors;
-   EYieldPhase m_eYield = YIELD_NONE;
-   SGridCell   m_sSideCell;       /* ô đang dạt sang                     */
-   SGridCell   m_sYieldBlocked;   /* ô tranh chấp đã nhường              */
-   UInt8       m_unYieldOppId = 255;
+   ETrafficPhase m_eTraffic = TRAFFIC_NONE;
+   std::vector<SGridCell> m_vecDetourPath;  /* đúng 3 ô: rẽ/song song/rẽ về */
+   UInt32      m_unDetourIdx  = 0;
    UInt32      m_unYieldTimer = 0;
-   UInt32      m_unBlockedTicks = 0;  /* leo thang: chờ -> né -> vẽ lại đường */
-   UInt32      m_unSideCooldown = 0;
-   UInt32      m_unSidestepCount = 0; /* số lần dạt làn nhường robot ưu tiên */
+   UInt32      m_unBlockedTicks = 0;
+   UInt32      m_unDetourCount  = 0;
 
-   /* Hằng số thời gian đặt chỗ (tick): ô 1 m @ 25 cm/s ~ 40 tick        */
-   static constexpr UInt32 RES_KEEPALIVE = 60;   /* gia hạn ô đang đứng  */
-   static constexpr UInt32 RES_AHEAD     = 110;  /* đặt ô sắp bước vào   */
-   static constexpr UInt32 RES_GRACE     = 12;   /* giữ ô vừa rời thêm   */
+   /* Hằng số thời gian đặt chỗ (tick). Ô 0.2m @ 10 cm/s ~ 20 tick/ô
+    * (ticks_per_second=10) -> cửa sổ đặt trước phải bao trọn 1 ô. */
+   static constexpr UInt32 RES_KEEPALIVE = 15;
+   static constexpr UInt32 RES_AHEAD     = 25;
+   static constexpr UInt32 RES_GRACE     = 4;
 };
 
 }  /* namespace argos */

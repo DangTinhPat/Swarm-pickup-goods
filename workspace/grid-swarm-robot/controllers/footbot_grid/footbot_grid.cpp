@@ -1,11 +1,9 @@
 /**
  * footbot_grid.cpp — LÕI ĐIỀU KHIỂN: vòng đời ControlStep, máy trạng
- * thái nhiệm vụ, chính sách pin trễ (hysteresis 20% / 70%) và cơ chế
- * robot TỰ nhận việc trên bảng đen chia sẻ.
- *
- * Hai mô-đun còn lại của controller:
- *   - footbot_grid_nav.cpp     : định vị QR sàn + A* + bám tâm ô
- *   - footbot_grid_traffic.cpp : đặt chỗ ô + RAB + nhường đường ưu tiên
+ * thái nhiệm vụ đặt tên đúng đặc tả (IDLE / TO_PICKUP / PICKING /
+ * DELIVERING / DROPPING / RETURNING / RESTING / EMERGENCY_CHARGE),
+ * chính sách pin trễ (hysteresis 20% / 70%) và cơ chế robot TỰ nhận
+ * việc trên bảng đen chia sẻ (không có phân việc tập trung).
  */
 
 #include "footbot_grid.h"
@@ -21,13 +19,12 @@ namespace argos {
 /****************************************/
 
 CFootBotGrid::CFootBotGrid() :
-   m_cHardTurn(ToRadians(CDegrees(65.0))) {}
+   m_cHardTurn(ToRadians(CDegrees(55.0))) {}
 
 /****************************************/
 /****************************************/
 
 void CFootBotGrid::Init(TConfigurationNode& t_node) {
-   /* Thiết bị */
    m_pcWheels     = GetActuator<CCI_DifferentialSteeringActuator>("differential_steering");
    m_pcWheelsSens = GetSensor  <CCI_DifferentialSteeringSensor>  ("differential_steering");
    m_pcRABAct     = GetActuator<CCI_RangeAndBearingActuator>     ("range_and_bearing");
@@ -37,17 +34,16 @@ void CFootBotGrid::Init(TConfigurationNode& t_node) {
    m_pcBattery    = GetSensor  <CCI_BatterySensor>               ("battery");
    m_pcGround     = GetSensor  <CCI_FootBotMotorGroundSensor>    ("footbot_motor_ground");
 
-   /* Tham số XML (đều có mặc định hợp lý) */
-   Real fHardTurnDeg = 65.0;
-   TConfigurationNode* ptWheel = nullptr;
+   Real fHardTurnDeg = 55.0;
    if(NodeExists(t_node, "wheel")) {
-      ptWheel = &GetNode(t_node, "wheel");
-      GetNodeAttributeOrDefault(*ptWheel, "max_speed_cms",  m_fMaxSpeed,    m_fMaxSpeed);
-      GetNodeAttributeOrDefault(*ptWheel, "turn_speed_cms", m_fTurnSpeed,   m_fTurnSpeed);
-      GetNodeAttributeOrDefault(*ptWheel, "kp_heading",     m_fKpHeading,   m_fKpHeading);
-      GetNodeAttributeOrDefault(*ptWheel, "hard_turn_deg",  fHardTurnDeg,   fHardTurnDeg);
-      GetNodeAttributeOrDefault(*ptWheel, "waypoint_tol",   m_fWaypointTol, m_fWaypointTol);
-      GetNodeAttributeOrDefault(*ptWheel, "goal_tol",       m_fGoalTol,     m_fGoalTol);
+      TConfigurationNode& tWheel = GetNode(t_node, "wheel");
+      GetNodeAttributeOrDefault(tWheel, "cruise_speed_cms", m_fCruiseSpeed, m_fCruiseSpeed);
+      GetNodeAttributeOrDefault(tWheel, "pivot_speed_cms",  m_fPivotSpeed,  m_fPivotSpeed);
+      GetNodeAttributeOrDefault(tWheel, "kp_heading",       m_fKpHeading,   m_fKpHeading);
+      GetNodeAttributeOrDefault(tWheel, "hard_turn_deg",    fHardTurnDeg,   fHardTurnDeg);
+      GetNodeAttributeOrDefault(tWheel, "waypoint_tol",     m_fWaypointTol, m_fWaypointTol);
+      GetNodeAttributeOrDefault(tWheel, "goal_tol",         m_fGoalTol,     m_fGoalTol);
+      GetNodeAttributeOrDefault(tWheel, "qr_snap_radius",   m_fQrSnapRadius, m_fQrSnapRadius);
    }
    m_cHardTurn = ToRadians(CDegrees(fHardTurnDeg));
    if(NodeExists(t_node, "battery")) {
@@ -57,11 +53,11 @@ void CFootBotGrid::Init(TConfigurationNode& t_node) {
    }
    if(NodeExists(t_node, "timing")) {
       TConfigurationNode& tTim = GetNode(t_node, "timing");
-      GetNodeAttributeOrDefault(tTim, "pick_ticks", m_unPickTicks, m_unPickTicks);
-      GetNodeAttributeOrDefault(tTim, "drop_ticks", m_unDropTicks, m_unDropTicks);
+      GetNodeAttributeOrDefault(tTim, "pick_ticks",    m_unPickTicks,       m_unPickTicks);
+      GetNodeAttributeOrDefault(tTim, "drop_ticks",    m_unDropTicks,       m_unDropTicks);
+      GetNodeAttributeOrDefault(tTim, "idle_rest_ticks", m_unIdleRestTimeout, m_unIdleRestTimeout);
    }
 
-   /* Định danh số: "fb7" -> 7 (dùng làm chủ sở hữu đặt chỗ + phá hòa) */
    const std::string& strId = GetId();
    size_t unDigit = strId.find_first_of("0123456789");
    m_unId = (unDigit == std::string::npos)
@@ -81,19 +77,22 @@ void CFootBotGrid::Reset() {
    m_unSnapCount   = 0;
    m_unRelocCount  = 0;
    m_fBattery      = 1.0;
-   m_eState        = STATE_CHARGING;
+   m_eState        = STATE_RESTING;
    m_sTask.Clear();
    m_unActionTimer = 0;
+   m_unIdleTicks   = 0;
    m_nTargetDock   = -1;
    m_bHaveGoal     = false;
    m_bGoalReached  = false;
    m_vecPath.clear();
    m_unPathIdx     = 0;
    m_vecNeighbors.clear();
-   m_eYield        = YIELD_NONE;
+   m_eTraffic      = TRAFFIC_NONE;
+   m_vecDetourPath.clear();
+   m_unDetourIdx   = 0;
    m_unYieldTimer  = 0;
    m_unBlockedTicks = 0;
-   m_unSideCooldown = 0;
+   m_unDetourCount  = 0;
    m_pcRABAct->ClearData();
    m_pcLEDs->SetAllColors(CColor::BLACK);
 }
@@ -102,8 +101,6 @@ void CFootBotGrid::Reset() {
 /****************************************/
 
 CGridLoopFunctions& CFootBotGrid::LF() {
-   /* Lấy trễ: Loop Functions được ARGoS khởi tạo SAU các controller,
-    * nên con trỏ chỉ an toàn từ tick đầu tiên trở đi. */
    if(m_pcLF == nullptr) {
       m_pcLF = &dynamic_cast<CGridLoopFunctions&>(
          CSimulator::GetInstance().GetLoopFunctions());
@@ -115,31 +112,20 @@ CGridLoopFunctions& CFootBotGrid::LF() {
 /****************************************/
 
 void CFootBotGrid::ControlStep() {
-   /* 1. Định vị: tích phân encoder + chốt lại bằng "QR sàn" */
    UpdateLocalization();
-
-   /* 2. Đọc pin (phân số 0..1 do mô hình time_motion của ARGoS xả,
-    *    Loop Functions nạp lại khi robot đứng trong ô dock) */
    m_fBattery = m_pcBattery->GetReading().AvailableCharge;
-
-   /* 3. Nghe hàng xóm quanh bán kính RAB */
    ParseNeighbors();
 
-   /* 4. Tick đầu: robot sinh ra ngay trên dock của mình */
    if(m_bFirstStep) {
       m_bFirstStep = false;
       m_sPrevCell  = m_sCurCell;
-      /* Dock bên dưới chân chính là dock mục tiêu ban đầu */
       for(SInt32 i = 0; i < NUM_DOCKS; ++i)
          if(DockCell(i) == m_sCurCell) { m_nTargetDock = i; break; }
-      m_eState = (m_fBattery < m_fLeaveBatt) ? STATE_CHARGING : STATE_IDLE_DOCK;
+      m_eState = (m_fBattery >= m_fLeaveBatt) ? STATE_IDLE : STATE_RESTING;
    }
 
-   /* 5. Quyết định nhiệm vụ (FSM) rồi 6. thi hành di chuyển an toàn */
    RunStateMachine();
    StepMovement();
-
-   /* 7. Phát bản tin ưu tiên/ý định cho hàng xóm */
    BroadcastState();
    UpdateLed();
 }
@@ -149,24 +135,25 @@ void CFootBotGrid::ControlStep() {
 
 void CFootBotGrid::CheckBatteryEmergency() {
    if(m_fBattery >= m_fLowBatt) return;
-   if(m_eState == STATE_CHARGING || m_eState == STATE_TO_CHARGE) return;
+   if(m_eState == STATE_EMERGENCY_CHARGE) return;
 
-   /* Đang đậu sẵn trên dock thì chỉ cần chuyển sang chế độ sạc */
-   if(m_eState == STATE_IDLE_DOCK) {
-      m_eState = STATE_CHARGING;
+   /* Đã đậu tại dock (IDLE/RESTING): không cần di chuyển, chỉ đổi
+    * nhãn trạng thái — dock đã đang nạp pin cho robot rồi. */
+   if(m_eState == STATE_IDLE || m_eState == STATE_RESTING) {
+      m_eState = STATE_EMERGENCY_CHARGE;
+      RetargetDock(true);
       return;
    }
 
    /* NGƯỠNG XẢ CỨNG 20%: hủy/bàn giao nhiệm vụ ngay lập tức.
-    * - Chưa bốc hộp  -> trả cả hộp lẫn yêu cầu về bảng đen cho robot khác.
-    * - Đã ôm hộp     -> giữ quyền trên ô ngăn xếp (bàn giao dở dang),
-    *                    sạc xong sẽ đi giao nốt chính hộp đang ôm.       */
+    * - Chưa bốc hộp -> trả cả hộp lẫn yêu cầu về bảng đen.
+    * - Đã ôm hộp    -> giữ quyền trên ô mặt kệ, sạc xong đi giao nốt. */
    if(m_sTask.IsValid()) {
       LF().AbandonTask(m_unId, m_sTask.HasBox);
       if(!m_sTask.HasBox) m_sTask.Clear();
    }
    RetargetDock(true);
-   m_eState = STATE_TO_CHARGE;
+   m_eState = STATE_EMERGENCY_CHARGE;
    LF().NotifyEmergency(m_unId);
    LOG << "[fb" << (int)m_unId << "] KHAN CAP pin "
        << (int)(m_fBattery * 100.0) << "% -> dock " << m_nTargetDock << std::endl;
@@ -181,27 +168,26 @@ void CFootBotGrid::RunStateMachine() {
 
    switch(m_eState) {
 
-      case STATE_CHARGING: {
-         /* NGƯỠNG SẠC CỨNG 70%: bám dock cho tới khi vượt ngưỡng.
-          * (Loop Functions nạp pin cho MỌI robot đứng trong ô dock —
-          * dock ẩn danh, không cần bắt tay, ai đến trước dùng trước.) */
-         if(m_fBattery >= m_fLeaveBatt) {
-            if(m_sTask.HasBox) {
-               /* Tiếp tục chuyến giao hàng đã gác lại lúc khẩn cấp */
-               m_eState = STATE_TO_DELIVER;
-               SetGoal(LF().GetDemands()[m_sTask.DemandIdx].Cell);
-            }
-            else {
-               m_eState = STATE_IDLE_DOCK;
-            }
+      case STATE_IDLE: {
+         if((unTick + m_unId) % 10 == 0
+            && m_fBattery >= m_fLeaveBatt
+            && TryClaimBestTask()) {
+            m_eState = STATE_TO_PICKUP;
+            m_unIdleTicks = 0;
+            break;
+         }
+         /* Quá 100 tick không có việc -> ngủ đông tiết kiệm năng lượng */
+         if(++m_unIdleTicks > m_unIdleRestTimeout) {
+            m_eState = STATE_RESTING;
+            m_unIdleTicks = 0;
          }
          break;
       }
 
-      case STATE_IDLE_DOCK: {
-         /* Đậu tại dock (vẫn được sạc tiếp lên 100%). So le nhịp quét
-          * bảng đen theo Id để 10 robot không tranh việc cùng một tick. */
-         if((unTick + m_unId) % 10 == 0
+      case STATE_RESTING: {
+         /* Vẫn ở dock, vẫn được sạc thụ động; dò việc thưa hơn IDLE
+          * (nhịp quét dài hơn) đúng tinh thần "ngủ đông tiết kiệm". */
+         if((unTick + m_unId) % 20 == 0
             && m_fBattery >= m_fLeaveBatt
             && TryClaimBestTask()) {
             m_eState = STATE_TO_PICKUP;
@@ -223,11 +209,11 @@ void CFootBotGrid::RunStateMachine() {
          if(LF().PickUpBox(m_unId, m_sTask.ConveyorIdx, unColor)) {
             m_sTask.HasBox = true;
             m_sTask.Color  = unColor;
-            m_eState       = STATE_TO_DELIVER;
-            SetGoal(LF().GetDemands()[m_sTask.DemandIdx].Cell);
+            m_eState       = STATE_DELIVERING;
+            const CGridLoopFunctions::SDemand& sDem = LF().GetDemands()[m_sTask.DemandIdx];
+            SetGoal(StackFaceCell(sDem.Cell, m_sTask.FarSide));
          }
          else {
-            /* Hộp biến mất (không thể xảy ra khi claim đúng) — nhả việc */
             LF().AbandonTask(m_unId, false);
             m_sTask.Clear();
             AfterTaskDone();
@@ -235,15 +221,15 @@ void CFootBotGrid::RunStateMachine() {
          break;
       }
 
-      case STATE_TO_DELIVER: {
+      case STATE_DELIVERING: {
          if(m_bGoalReached) {
-            m_eState        = STATE_DELIVERING;
+            m_eState        = STATE_DROPPING;
             m_unActionTimer = m_unDropTicks;
          }
          break;
       }
 
-      case STATE_DELIVERING: {
+      case STATE_DROPPING: {
          if(m_unActionTimer > 0) { --m_unActionTimer; break; }
          if(!LF().DeliverBox(m_unId, m_sTask.DemandIdx, m_sTask.Color)) {
             LOGERR << "[fb" << (int)m_unId << "] giao hang that bai?!" << std::endl;
@@ -253,37 +239,34 @@ void CFootBotGrid::RunStateMachine() {
          break;
       }
 
-      case STATE_TO_REST: {
-         /* Nghỉ khi khan việc — nhưng vẫn nghe ngóng: có hàng mới và
-          * còn đủ pin thì quay xe nhận việc luôn, khỏi về tới dock. */
+      case STATE_RETURNING: {
          if((unTick + m_unId) % 15 == 0
             && m_fBattery > m_fLowBatt + 0.05
             && TryClaimBestTask()) {
             m_eState = STATE_TO_PICKUP;
             break;
          }
-         /* Dock nhắm tới vừa bị robot khác chiếm? -> chọn dock trống khác */
          if((unTick + m_unId) % 20 == 0
             && (m_nTargetDock < 0 || !LF().DockFree(m_nTargetDock, m_unId))) {
             RetargetDock(false);
          }
          if(m_bGoalReached && m_nTargetDock >= 0
             && m_sCurCell == DockCell(m_nTargetDock)) {
-            m_eState = (m_fBattery < m_fLeaveBatt) ? STATE_CHARGING
-                                                   : STATE_IDLE_DOCK;
+            m_eState = (m_fBattery >= m_fLeaveBatt) ? STATE_IDLE : STATE_RESTING;
          }
          break;
       }
 
-      case STATE_TO_CHARGE: {
-         /* Ưu tiên 1 — kiểm tra định kỳ dock còn trống không */
+      case STATE_EMERGENCY_CHARGE: {
          if((unTick + m_unId) % 20 == 0
             && (m_nTargetDock < 0 || !LF().DockFree(m_nTargetDock, m_unId))) {
             RetargetDock(true);
          }
+         /* Chỉ giải phóng về IDLE khi ĐANG Ở dock VÀ pin đã phục hồi >=70% */
          if(m_bGoalReached && m_nTargetDock >= 0
-            && m_sCurCell == DockCell(m_nTargetDock)) {
-            m_eState = STATE_CHARGING;
+            && m_sCurCell == DockCell(m_nTargetDock)
+            && m_fBattery >= m_fLeaveBatt) {
+            m_eState = STATE_IDLE;
          }
          break;
       }
@@ -294,24 +277,40 @@ void CFootBotGrid::RunStateMachine() {
 /****************************************/
 
 bool CFootBotGrid::TryClaimBestTask() {
-   /* PHI TẬP TRUNG: robot tự duyệt bảng đen (chỉ-đọc), tự chấm điểm
-    * từng cặp (hộp chờ, ô đang cần đúng màu đó) theo tổng quãng đường
-    * Manhattan robot->băng chuyền->ngăn xếp, rồi xin ghi claim nguyên
-    * tử. Bảng đen không phân việc cho ai — ai chấm xong trước thì
-    * giành được trước (first-come-first-served). */
    const auto& vecConv = LF().GetConveyors();
    const auto& vecDem  = LF().GetDemands();
 
    SInt32 nBestConv = -1, nBestDem = -1, nBestCost = 0;
+   bool   bBestFar   = false;
+   UInt8  unBestColor = 0;
    for(size_t c = 0; c < vecConv.size(); ++c) {
-      if(!vecConv[c].HasBox || vecConv[c].ClaimedBy >= 0) continue;
+      /* Băng chuyền trưng bày tối đa 3 hộp — chỉ cần MỘT hộp chưa ai
+       * nhận trong hàng đợi khớp màu là đủ điều kiện xét (không quan
+       * tâm thứ tự trong Queue). */
+      bool bHasAnyFreeBox = false;
+      for(SInt32 nOwner : vecConv[c].ClaimedBy)
+         if(nOwner < 0) { bHasAnyFreeBox = true; break; }
+      if(!bHasAnyFreeBox) continue;
+
       for(size_t d = 0; d < vecDem.size(); ++d) {
          if(!vecDem[d].Active || vecDem[d].ClaimedBy >= 0) continue;
-         if(vecDem[d].Color != vecConv[c].Color) continue;
-         SInt32 nCost = m_sCurCell.ManhattanTo(vecConv[c].Cell)
-                      + vecConv[c].Cell.ManhattanTo(vecDem[d].Cell);
+         bool bColorAvailable = false;
+         for(size_t k = 0; k < vecConv[c].Queue.size(); ++k)
+            if(vecConv[c].ClaimedBy[k] < 0 && vecConv[c].Queue[k] == vecDem[d].Color)
+               { bColorAvailable = true; break; }
+         if(!bColorAvailable) continue;
+         /* Ô ngăn xếp là vật cản: chi phí thật là tới MẶT KỆ gần hơn
+          * trong 2 mặt (trước/sau dải obstacle) — không phải tới ô đó. */
+         SGridCell sFaceNear = StackFaceCell(vecDem[d].Cell, false);
+         SGridCell sFaceFar  = StackFaceCell(vecDem[d].Cell, true);
+         SInt32 nCostNear = vecConv[c].Cell.ManhattanTo(sFaceNear);
+         SInt32 nCostFar  = vecConv[c].Cell.ManhattanTo(sFaceFar);
+         bool   bFar      = nCostFar < nCostNear;
+         SInt32 nLegCost  = bFar ? nCostFar : nCostNear;
+         SInt32 nCost = m_sCurCell.ManhattanTo(vecConv[c].Cell) + nLegCost;
          if(nBestConv < 0 || nCost < nBestCost) {
-            nBestConv = c; nBestDem = d; nBestCost = nCost;
+            nBestConv = c; nBestDem = d; nBestCost = nCost; bBestFar = bFar;
+            unBestColor = vecDem[d].Color;
          }
       }
    }
@@ -320,8 +319,9 @@ bool CFootBotGrid::TryClaimBestTask() {
 
    m_sTask.ConveyorIdx = nBestConv;
    m_sTask.DemandIdx   = nBestDem;
-   m_sTask.Color       = vecConv[nBestConv].Color;
+   m_sTask.Color       = unBestColor;
    m_sTask.HasBox      = false;
+   m_sTask.FarSide     = bBestFar;
    SetGoal(vecConv[nBestConv].Cell);
    return true;
 }
@@ -330,16 +330,12 @@ bool CFootBotGrid::TryClaimBestTask() {
 /****************************************/
 
 void CFootBotGrid::AfterTaskDone() {
-   /* Còn việc và còn pin -> làm tiếp; hết việc -> về dock trống gần
-    * nhất nghỉ (KHÔNG chạy lòng vòng đốt pin). */
    if(m_fBattery > m_fLowBatt + 0.05 && TryClaimBestTask()) {
       m_eState = STATE_TO_PICKUP;
       return;
    }
-   m_eState = STATE_TO_REST;
+   m_eState = STATE_RETURNING;
    if(!RetargetDock(false)) {
-      /* Không còn dock trống (hiếm): đứng chờ tại chỗ, 20 tick sau
-       * RunStateMachine sẽ thử chọn lại. */
       SetGoal(m_sCurCell);
    }
 }
@@ -348,15 +344,9 @@ void CFootBotGrid::AfterTaskDone() {
 /****************************************/
 
 bool CFootBotGrid::RetargetDock(bool b_must_find) {
-   /* DOCK ẨN DANH PHI TẬP TRUNG Ở HAI BIÊN BẢN ĐỒ:
-    * hỏi bảng đen "trong 10 ô dock (5 trái + 5 phải), ô nào chưa có ai
-    * đặt chỗ và chưa có robot đứng?", rồi tự chọn ô GẦN NHẤT theo
-    * Manhattan — không hề có sự phân phối tập trung; hai robot cùng
-    * nhắm một dock sẽ được phân xử bằng đặt chỗ ô khi tới gần, kẻ thua
-    * tự động chọn dock trống khác. */
    SInt32 nDock = LF().NearestFreeDock(m_sCurCell, m_unId);
    if(nDock < 0) {
-      if(b_must_find && m_nTargetDock >= 0) return true; /* giữ mục tiêu cũ */
+      if(b_must_find && m_nTargetDock >= 0) return true;
       return false;
    }
    m_nTargetDock = nDock;
@@ -371,7 +361,7 @@ void CFootBotGrid::SetGoal(const SGridCell& s_cell) {
    m_sGoalCell    = s_cell;
    m_bHaveGoal    = true;
    m_bGoalReached = (m_sCurCell == s_cell);
-   m_vecPath.clear();          /* buộc StepMovement vẽ lại đường */
+   m_vecPath.clear();
    m_unPathIdx    = 0;
 }
 
@@ -379,12 +369,12 @@ void CFootBotGrid::SetGoal(const SGridCell& s_cell) {
 /****************************************/
 
 UInt8 CFootBotGrid::GetPriority() const {
-   /* Bảng ưu tiên 3 mức của đề bài (số nhỏ = quyền cao):
-    *   1 - khẩn cấp dưới 20% pin đang tìm trạm sạc
-    *   2 - đang chở hộp hàng đi giao
-    *   3 - chạy không tải / về dock nghỉ                            */
-   if(m_eState == STATE_TO_CHARGE) return PRIO_EMERGENCY;
-   if(m_sTask.HasBox)              return PRIO_CARRYING;
+   /* Ưu tiên bất đối xứng, hàm thuần của FSM (không nhấp nháy giữa đường):
+    *   1 - STATE_EMERGENCY_CHARGE (pin<=20% đang/đã tìm trạm sạc)
+    *   2 - STATE_DELIVERING (đang chở hộp hàng màu đi giao)
+    *   3 - còn lại (IDLE/RETURNING/RESTING/TO_PICKUP/PICKING/DROPPING) */
+   if(m_eState == STATE_EMERGENCY_CHARGE) return PRIO_EMERGENCY;
+   if(m_eState == STATE_DELIVERING)       return PRIO_DELIVERING;
    return PRIO_IDLE;
 }
 
@@ -393,14 +383,14 @@ UInt8 CFootBotGrid::GetPriority() const {
 
 const char* CFootBotGrid::GetStateName() const {
    switch(m_eState) {
-      case STATE_CHARGING:   return "SAC";
-      case STATE_IDLE_DOCK:  return "CHO";
-      case STATE_TO_PICKUP:  return "DI-LAY";
-      case STATE_PICKING:    return "BOC";
-      case STATE_TO_DELIVER: return "DI-GIAO";
-      case STATE_DELIVERING: return "HA";
-      case STATE_TO_REST:    return "VE-NGHI";
-      case STATE_TO_CHARGE:  return "KHAN-CAP";
+      case STATE_IDLE:              return "IDLE";
+      case STATE_TO_PICKUP:         return "TO_PICKUP";
+      case STATE_PICKING:           return "PICKING";
+      case STATE_DELIVERING:        return "DELIVERING";
+      case STATE_DROPPING:          return "DROPPING";
+      case STATE_RETURNING:         return "RETURNING";
+      case STATE_RESTING:           return "RESTING";
+      case STATE_EMERGENCY_CHARGE:  return "EMERGENCY_CHARGE";
    }
    return "?";
 }
@@ -409,10 +399,11 @@ const char* CFootBotGrid::GetStateName() const {
 /****************************************/
 
 void CFootBotGrid::UpdateLed() {
-   if(m_eState == STATE_TO_CHARGE)      m_pcLEDs->SetAllColors(CColor::MAGENTA);
-   else if(m_eState == STATE_CHARGING)  m_pcLEDs->SetAllColors(CColor::ORANGE);
-   else if(m_sTask.HasBox)              m_pcLEDs->SetAllColors(BoxCColor(m_sTask.Color));
-   else                                 m_pcLEDs->SetAllColors(CColor::BLACK);
+   if(m_eState == STATE_EMERGENCY_CHARGE)     m_pcLEDs->SetAllColors(CColor::MAGENTA);
+   else if(m_eState == STATE_IDLE || m_eState == STATE_RESTING)
+                                               m_pcLEDs->SetAllColors(CColor::ORANGE);
+   else if(m_sTask.HasBox)                    m_pcLEDs->SetAllColors(BoxCColor(m_sTask.Color));
+   else                                       m_pcLEDs->SetAllColors(CColor::BLACK);
 }
 
 /****************************************/
