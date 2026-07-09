@@ -47,7 +47,7 @@ void CGridQTUserFunctions::DrawInWorld() {
     * cộng thêm các đốm nhỏ phủ đúng những ô mặt kệ đang có yêu cầu màu
     * (số lượng nhỏ, đổi động theo demand). --------------------------- */
    DrawBox(CVector3(0.0, 0.0, 0.003), CQuaternion(),
-           CVector3(2 * HALF_SPAN + 0.05, 2 * HALF_SPAN + 0.05, 0.001),
+           CVector3(2 * HALF_SPAN + 0.7, 2 * HALF_SPAN + 0.7, 0.001),
            CColor::WHITE);
 
    const Real fDockMidX = RowToWorldX(DOCK_ROW_MIN + 2);   /* tâm 5 ô dock */
@@ -74,7 +74,7 @@ void CGridQTUserFunctions::DrawInWorld() {
       }
    }
 
-   /* --- 1. Kẻ lưới 50x50 (ô 0.2 m) nổi trên lớp che — tương đương hook
+   /* --- 1. Kẻ lưới 30x30 (ô 0.2 m) nổi trên lớp che — tương đương hook
     * "PostDraw()" mà đề bài mô tả: ARGoS3 gọi API này là DrawInWorld()
     * trong CQTOpenGLUserFunctions (không tồn tại PostDraw() trong
     * ARGoS3 thật); DrawRay() là hàm vẽ đoạn thẳng (không có DrawLine()

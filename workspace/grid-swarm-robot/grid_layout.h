@@ -5,29 +5,32 @@
  * Functions include file này, nhờ đó ma trận lưới, vật cản cứng, dock
  * sạc, băng chuyền, ngăn xếp và giao thức RAB luôn nhất quán 2 phía.
  *
- * PHIÊN BẢN LƯỚI MỊN 50 x 50 Ô, MỖI Ô 0.2 m x 0.2 m (arena 10 m x 10 m).
- * Kích cỡ ô = đường kính thân Foot-bot thực đo (2 * 0.085036758 m =
- * 0.17007 m, ARGoS) + 0.03 m biên an toàn — ô chỉ vừa khít một robot,
- * KHÔNG còn dư địa cho sai số định vị lớn, nên bộ lái + chốt QR phải
- * rất chính xác (xem footbot_grid_nav.cpp).
+ * PHIÊN BẢN LƯỚI GỌN 30 x 30 Ô, MỖI Ô 0.2 m x 0.2 m (arena hữu ích
+ * 6 m x 6 m — đã CROP từ 50x50/10m: cùng số trạm, cùng thuật toán,
+ * chỉ cắt bỏ vùng sàn trống thừa để rút ngắn ~50% quãng đường mỗi
+ * chuyến). Kích cỡ ô = đường kính thân Foot-bot thực đo
+ * (2 * 0.085036758 m = 0.17007 m, ARGoS) + 0.03 m biên an toàn — ô
+ * chỉ vừa khít một robot, nên bộ lái + chốt QR phải rất chính xác
+ * (xem footbot_grid_nav.cpp).
  *
  * BỐ CỤC (Row parametrize trục X, Col parametrize trục Y — xem công
  * thức ánh xạ bên dưới):
  *
- *   Col=0 (y=-4.9)                                    Col=49 (y=+4.9)
- *   dock TÂY (5 ô, Row 22-26) ............... dock ĐÔNG (5 ô, Row 22-26)
+ *   Row=29..27 (x=+2.9..+2.5)   đệm 3 hàng sát tường Bắc
+ *   Row=26 (x=+2.3)  ████████████████████  <- ngăn xếp 3 (vật cản cứng)
+ *   Row=25..23                  hành lang 3 hàng trống
+ *   Row=22 (x=+1.5)  ████████████████████  <- ngăn xếp 2 (vật cản cứng)
+ *   Row=21..19                  hành lang 3 hàng trống
+ *   Row=18 (x=+0.7)  ████████████████████  <- ngăn xếp 1 (vật cản cứng)
+ *   Row=17..15                  vùng đệm tiếp cận kệ
  *
- *   Row=12 (x=-2.5)  ████████████████████████████████  <- ngăn xếp 1 (vật cản)
- *   Row=13..24 (x=-2.3..-0.1) ..... hành lang lưu thông tự do .....
- *   Row=25 (x=+0.1)  ████████████████████████████████  <- ngăn xếp 2 (vật cản)
- *   Row=26..37 (x=+0.3..+2.5) ..... hành lang lưu thông tự do .....
- *   Row=38 (x=+2.7)  ████████████████████████████████  <- ngăn xếp 3 (vật cản)
+ *   Row=14..10       dock TÂY (Col=0) ▓        ▓ dock ĐÔNG (Col=29)
  *
- *   Col=5 (y=-3.9), Row=5/20/35 (x=-3.9/-0.9/+2.1): 3 miệng băng chuyền
+ *   Row=9..3                    sàn lưu thông tự do
+ *   Row=2 (x=-2.5)   . . C . . . . C . . . . C . .   <- 3 băng chuyền
+ *   Row=1..0                    đệm sát tường Nam
  *
- *   ████ = CELL_OBSTACLE thật (có <box> vật lý movable="false" đè khít
- *   trong .argos) — robot KHÔNG được lập kế hoạch đi vào, và vật lý
- *   dynamics2d cũng chặn cứng nếu có sai số cố tình lấn vào.
+ *   (ngăn xếp trải Col=5..24; băng chuyền tại Col=7/15/23)
  */
 
 #ifndef GRID_LAYOUT_H
@@ -48,24 +51,25 @@ namespace argos {
 /****************************************/
 
 constexpr Real   CELL_SIZE  = 0.2;      /* cạnh một ô lưới [m]            */
-constexpr SInt32 GRID_ROWS  = 50;       /* số hàng (parametrize trục X)   */
-constexpr SInt32 GRID_COLS  = 50;       /* số cột  (parametrize trục Y)   */
-/* Arena 10m x 10m đặt tâm tại gốc -> mép âm nằm ở -5.0 m mỗi trục */
-constexpr Real   HALF_SPAN  = GRID_ROWS * CELL_SIZE * 0.5;   /* = 5.0 m   */
+constexpr SInt32 GRID_ROWS  = 30;       /* số hàng (parametrize trục X)   */
+constexpr SInt32 GRID_COLS  = 30;       /* số cột  (parametrize trục Y)   */
+/* Lưới 6m x 6m đặt tâm tại gốc -> mép âm nằm ở -3.0 m mỗi trục */
+constexpr Real   HALF_SPAN  = GRID_ROWS * CELL_SIZE * 0.5;   /* = 3.0 m   */
 
 /**
  * CÔNG THỨC ÁNH XẠ TỌA ĐỘ LIÊN TỤC (x, y) -> MA TRẬN NGUYÊN (Row, Col)
  * ---------------------------------------------------------------------
- *   Row = (int)((x + 5.0) / 0.2)      Col = (int)((y + 5.0) / 0.2)
+ *   Row = (int)((x + HALF_SPAN) / CELL_SIZE) = (int)((x + 3.0) / 0.2)
+ *   Col = (int)((y + HALF_SPAN) / CELL_SIZE) = (int)((y + 3.0) / 0.2)
  *
  * Diễn giải: tịnh tiến gốc tọa độ từ tâm arena (0,0) về góc dưới của
- * dải [-5,+5) trên từng trục (cộng HALF_SPAN để mọi giá trị thành
+ * dải [-3,+3) trên từng trục (cộng HALF_SPAN để mọi giá trị thành
  * không âm), rồi chia cho cạnh ô 0.2 m và LẤY PHẦN NGUYÊN (không làm
  * tròn) — floor() cho số dương tương đương ép kiểu (int). Row bám
  * trục X, Col bám trục Y — ĐẢO NGƯỢC so với quy ước (row~y, col~x)
  * thường gặp, đây là lựa chọn tường minh của bố cục nhà kho này (các
  * "hàng ngăn xếp" là các dải Row cố định chạy dọc theo trục Y/Col).
- * Kết quả kẹp về [0, 49] để chống lỗi số thực khi robot chạm sát tường.
+ * Kết quả kẹp về [0, 29] để chống lỗi số thực khi robot chạm sát tường.
  */
 inline SInt32 WorldXToRow(Real f_x) {
    SInt32 nRow = static_cast<SInt32>(Floor((f_x + HALF_SPAN) / CELL_SIZE));
@@ -79,10 +83,9 @@ inline SInt32 WorldYToCol(Real f_y) {
 /**
  * CÔNG THỨC NGƯỢC: (Row, Col) -> TÂM Ô (x, y) TRONG THẾ GIỚI LIÊN TỤC
  * ---------------------------------------------------------------------
- *   x_tâm = -5.0 + (Row + 0.5) * 0.2      y_tâm = -5.0 + (Col + 0.5) * 0.2
+ *   x_tâm = -3.0 + (Row + 0.5) * 0.2      y_tâm = -3.0 + (Col + 0.5) * 0.2
  *
- * Cộng 0.5 để lấy đúng HỒNG TÂM ô — nơi dán "mã QR sàn" (đĩa đen bán
- * kính 0.02 m, khớp đúng ngưỡng khử sai số ở footbot_grid_nav.cpp).
+ * Cộng 0.5 để lấy đúng HỒNG TÂM ô — nơi dán "mã QR sàn".
  */
 inline Real RowToWorldX(SInt32 n_row) { return -HALF_SPAN + (n_row + 0.5) * CELL_SIZE; }
 inline Real ColToWorldY(SInt32 n_col) { return -HALF_SPAN + (n_col + 0.5) * CELL_SIZE; }
@@ -111,19 +114,15 @@ struct SGridCell {
 /* 2. VẬT CẢN CỨNG: 3 HÀNG NGĂN XẾP     */
 /****************************************/
 
-/* 3 hàng ngăn xếp = 3 dải Row CỐ ĐỊNH, chạy dọc Col=10..39 (30 ô = 6.0 m,
- * khớp đúng bề dài <box size="0.2,6.0,0.5">). Đề bài viết "Col=10 đến
- * 40" nhưng kích thước box neo cứng là 6.0 m = 30 ô -> dùng biên trên
- * là 39 (không phải 40) để khớp khít vật lý với box, tránh hở 0.2 m.
- * Dồn 3 hàng lên khu vực PHÍA TRÊN bản đồ (Row lớn), mỗi hàng chỉ cách
- * hàng kế 4 Row (3 hàng trống làm hành lang) — dày hơn hẳn bố cục cũ
- * (từng cách nhau 13 Row) theo yêu cầu; băng chuyền dồn xuống đáy, xem
- * mục 3 bên dưới. */
-constexpr std::array<SInt32, 3> STACK_ROWS    = { 38, 42, 46 };
-constexpr SInt32                STACK_COL_MIN = 10;
-constexpr SInt32                STACK_COL_MAX = 39;
-constexpr SInt32 STACK_CELLS_PER_ROW = STACK_COL_MAX - STACK_COL_MIN + 1;  /* 30 */
-constexpr SInt32 NUM_STACK_CELLS     = 3 * STACK_CELLS_PER_ROW;           /* 90 */
+/* 3 hàng ngăn xếp = 3 dải Row CỐ ĐỊNH ở khu vực phía trên bản đồ,
+ * mỗi hàng cách hàng kế 4 Row (3 hàng trống làm hành lang đôi chiều),
+ * chạy dọc Col=5..24 (20 ô = 4.0 m, khớp đúng bề dài
+ * <box size="0.2,4.0,0.5"> trong .argos). */
+constexpr std::array<SInt32, 3> STACK_ROWS    = { 18, 22, 26 };
+constexpr SInt32                STACK_COL_MIN = 5;
+constexpr SInt32                STACK_COL_MAX = 24;
+constexpr SInt32 STACK_CELLS_PER_ROW = STACK_COL_MAX - STACK_COL_MIN + 1;  /* 20 */
+constexpr SInt32 NUM_STACK_CELLS     = 3 * STACK_CELLS_PER_ROW;           /* 60 */
 
 inline SGridCell StackCell(SInt32 n_idx) {
    return SGridCell(STACK_ROWS[n_idx / STACK_CELLS_PER_ROW],
@@ -152,22 +151,22 @@ inline SGridCell StackFaceCell(const SGridCell& s_stack, bool b_far_side) {
 /* 3. DOCK SẠC & BĂNG CHUYỀN            */
 /****************************************/
 
-/* 10 dock sạc chia đều 2 biên Đông/Tây: Col=0 (Tây) và Col=49 (Đông),
- * Row liên tục 22..26 (5 ô mỗi bên). */
+/* 10 dock sạc chia đều 2 biên Đông/Tây: Col=0 (Tây) và Col=29 (Đông),
+ * Row liên tục 10..14 (5 ô mỗi bên) — nằm giữa vùng băng chuyền (đáy)
+ * và vùng kệ hàng (đỉnh) để cân bằng quãng đường 2 chiều. */
 constexpr SInt32 NUM_DOCKS = 10;
-constexpr SInt32 DOCK_ROW_MIN = 22;
+constexpr SInt32 DOCK_ROW_MIN = 10;
 inline SGridCell DockCell(SInt32 n_idx) {
-   /* dock 0..4 ở biên TÂY (Col 0), dock 5..9 ở biên ĐÔNG (Col 49) */
+   /* dock 0..4 ở biên TÂY (Col 0), dock 5..9 ở biên ĐÔNG (Col 29) */
    SInt32 nRow = DOCK_ROW_MIN + (n_idx % 5);
    return (n_idx < 5) ? SGridCell(nRow, 0) : SGridCell(nRow, GRID_COLS - 1);
 }
 
-/* 3 miệng băng chuyền dồn xuống ĐÁY bản đồ (Row nhỏ, đối diện phía kệ
- * hàng đã dồn lên đỉnh): cùng Row=2 cố định, trải dọc theo Col=12/25/38
- * để dễ phân biệt và chừa lối đi rộng lên khu vực dock/kệ hàng. */
+/* 3 miệng băng chuyền ở ĐÁY bản đồ (đối diện phía kệ hàng trên đỉnh):
+ * cùng Row=2 cố định, trải dọc theo Col=7/15/23. */
 constexpr SInt32 NUM_CONVEYORS = 3;
 constexpr SInt32 CONVEYOR_ROW  = 2;
-constexpr std::array<SInt32, NUM_CONVEYORS> CONVEYOR_COLS = { 12, 25, 38 };
+constexpr std::array<SInt32, NUM_CONVEYORS> CONVEYOR_COLS = { 7, 15, 23 };
 inline SGridCell ConveyorCell(SInt32 n_idx) {
    return SGridCell(CONVEYOR_ROW, CONVEYOR_COLS[n_idx]);
 }

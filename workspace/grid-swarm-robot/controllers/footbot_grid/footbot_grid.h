@@ -2,7 +2,7 @@
  * footbot_grid.h
  *
  * BỘ ĐIỀU KHIỂN PHI TẬP TRUNG cho một AMR (foot-bot vi sai) trong nhà
- * kho lưới mịn 50x50 (ô 0.2 m). Mỗi robot tự mình:
+ * kho lưới 30x30 (ô 0.2 m). Mỗi robot tự mình:
  *
  *   1. ĐỊNH VỊ: dead-reckoning từ encoder 2 bánh (trôi), XÓA SẠCH sai
  *      số khi cảm biến sàn bắt được đĩa QR ở hồng tâm ô (bán kính chốt

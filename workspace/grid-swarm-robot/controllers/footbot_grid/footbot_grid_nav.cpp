@@ -4,7 +4,7 @@
  * 1. UpdateLocalization : dead-reckoning encoder, chốt lại bằng "QR sàn"
  *    (đĩa đen r=0.02 m ở hồng tâm ô) khi robot lọt vào đúng bán kính
  *    0.02 m quanh tâm — khớp chính xác yêu cầu đề bài.
- * 2. PlanPath            : A* 4 hướng trên lưới 50x50, CẤM TUYỆT ĐỐI ô
+ * 2. PlanPath            : A* 4 hướng trên lưới 30x30, CẤM TUYỆT ĐỐI ô
  *    CELL_OBSTACLE (thân ngăn xếp — vật cản vật lý thật ngoài .argos).
  * 3. ApplySteering        : bộ điều khiển tỷ lệ; V_Base = 10 cm/s chạy
  *    thẳng, hạ còn 3 cm/s khi bẻ lái > 55° (rẽ 90° tại tâm ô) để chống
@@ -106,7 +106,7 @@ void CFootBotGrid::UpdateLocalization() {
 /****************************************/
 
 bool CFootBotGrid::PlanPath(const SGridCell& s_goal, UInt32 un_avoid_level) {
-   /* A* 4 hướng trên lưới 50x50. CELL_OBSTACLE (thân ngăn xếp) CẤM
+   /* A* 4 hướng trên lưới 30x30. CELL_OBSTACLE (thân ngăn xếp) CẤM
     * TUYỆT ĐỐI dù có phải ô đích hay không — đích hợp lệ chỉ có thể là
     * CELL_FREE / CELL_DOCK / CELL_CONVEYOR (SetGoal() không bao giờ
     * trỏ vào CELL_OBSTACLE, nhưng vẫn chặn cứng ở đây để phòng thủ).
