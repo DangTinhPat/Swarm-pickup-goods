@@ -1,12 +1,22 @@
-# Controller goi truc tiep API "bang den" cua loop functions (dat cho o,
-# nhan viec, hoi dock trong...) nen hai phia phu thuoc lan nhau. De bo
-# nap dong cua ARGoS phan giai du symbol, ca hai duoc bien dich vao MOT
-# thu vien .so duy nhat (file nguon van tach thu muc ro rang).
+# Controller goi truc tiep API bang den cua loop functions (phu thuoc
+# 2 chieu) nen ca hai bien dich vao MOT thu vien .so duy nhat — bo nap
+# dong cua ARGoS khong phan giai duoc typeinfo cheo giua 2 thu vien
+# nap tuan tu.
 set(grid_loop_functions_SOURCES
   ${CMAKE_SOURCE_DIR}/controllers/footbot_grid/footbot_grid.cpp
-  ${CMAKE_SOURCE_DIR}/controllers/footbot_grid/footbot_grid_nav.cpp
+  ${CMAKE_SOURCE_DIR}/controllers/footbot_grid/footbot_grid_fsm.cpp
+  ${CMAKE_SOURCE_DIR}/controllers/footbot_grid/footbot_grid_localization.cpp
+  ${CMAKE_SOURCE_DIR}/controllers/footbot_grid/footbot_grid_pathfinding.cpp
+  ${CMAKE_SOURCE_DIR}/controllers/footbot_grid/footbot_grid_steering.cpp
   ${CMAKE_SOURCE_DIR}/controllers/footbot_grid/footbot_grid_traffic.cpp
+  ${CMAKE_SOURCE_DIR}/controllers/footbot_grid/footbot_grid_detour.cpp
+  ${CMAKE_SOURCE_DIR}/controllers/footbot_grid/footbot_grid_comms.cpp
   grid_loop_functions.cpp
+  grid_reservations.cpp
+  grid_task_board.cpp
+  grid_docks.cpp
+  grid_energy_safety.cpp
+  grid_metrics.cpp
   grid_floor_render.cpp)
 
 if(ARGOS_QTOPENGL_FOUND)

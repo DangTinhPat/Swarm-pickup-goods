@@ -1,3 +1,13 @@
+/**
+ * grid_qt_user_functions.cpp — Lớp vẽ debug 3D. DrawInWorld() là API
+ * tương đương "PostDraw" của ARGoS3 (không tồn tại PostDraw/DrawLine
+ * trong API thật; DrawRay là hàm vẽ đoạn thẳng).
+ *
+ * Lớp phủ che đĩa QR CHỈ mang tính hiển thị: cảm biến sàn đọc thẳng
+ * GetFloorColor() nên định vị không bị ảnh hưởng bởi bất cứ thứ gì vẽ
+ * ở đây.
+ */
+
 #include "grid_qt_user_functions.h"
 #include "grid_loop_functions.h"
 #include <controllers/footbot_grid/footbot_grid.h>
@@ -7,7 +17,6 @@
 #include <argos3/core/utility/math/ray3.h>
 
 #include <sstream>
-#include <iomanip>
 
 namespace argos {
 
@@ -34,23 +43,12 @@ CGridLoopFunctions& CGridQTUserFunctions::LF() {
 /****************************************/
 
 void CGridQTUserFunctions::DrawInWorld() {
-   /* --- 0. CHE ĐĨA QR ĐEN — CHỈ VỀ MẶT HIỂN THỊ ------------------------
-    * Đĩa đen r=0.085 m trong GetFloorColor() vẫn giữ NGUYÊN (bắt buộc
-    * để cảm biến sàn "thấy" được — xem grid_floor_render.cpp); cảm
-    * biến gọi thẳng CFloorEntity::GetColorAtPoint() -> GetFloorColor(),
-    * hoàn toàn tách biệt với những gì vẽ ở đây trong DrawInWorld() (một
-    * lớp render 3D riêng, không phải nguồn dữ liệu cảm biến) — nên phủ
-    * một lớp mờ CÙNG MÀU NỀN lên trên (z thấp hơn lưới) để mắt người
-    * không thấy chấm đen nữa mà định vị vẫn hoạt động y hệt.
-    * Dùng vài mảng phẳng lớn (nền trắng + 2 dải dock + từng ô băng
-    * chuyền) thay vì phủ từng ô một (~2400 ô) để rẻ hơn nhiều cho GPU,
-    * cộng thêm các đốm nhỏ phủ đúng những ô mặt kệ đang có yêu cầu màu
-    * (số lượng nhỏ, đổi động theo demand). --------------------------- */
+   /* Lớp phủ che đĩa QR: vài mảng phẳng lớn (rẻ cho GPU hơn ~900 đĩa) */
    DrawBox(CVector3(0.0, 0.0, 0.003), CQuaternion(),
            CVector3(2 * HALF_SPAN + 0.7, 2 * HALF_SPAN + 0.7, 0.001),
            CColor::WHITE);
 
-   const Real fDockMidX = RowToWorldX(DOCK_ROW_MIN + 2);   /* tâm 5 ô dock */
+   const Real fDockMidX = RowToWorldX(DOCK_ROW_MIN + 2);
    const Real fDockSpan = 5 * CELL_SIZE + 0.02;
    DrawBox(CVector3(fDockMidX, ColToWorldY(0), 0.004), CQuaternion(),
            CVector3(fDockSpan, CELL_SIZE + 0.02, 0.001), CColor(170, 218, 232));
@@ -74,11 +72,7 @@ void CGridQTUserFunctions::DrawInWorld() {
       }
    }
 
-   /* --- 1. Kẻ lưới 30x30 (ô 0.2 m) nổi trên lớp che — tương đương hook
-    * "PostDraw()" mà đề bài mô tả: ARGoS3 gọi API này là DrawInWorld()
-    * trong CQTOpenGLUserFunctions (không tồn tại PostDraw() trong
-    * ARGoS3 thật); DrawRay() là hàm vẽ đoạn thẳng (không có DrawLine()
-    * trong API thật) --- */
+   /* Lưới kẻ 30x30 nổi trên lớp phủ */
    const CColor cGridCol(130, 130, 130);
    for(SInt32 i = 0; i <= GRID_ROWS; ++i) {
       Real fX = -HALF_SPAN + i * CELL_SIZE;
@@ -91,8 +85,7 @@ void CGridQTUserFunctions::DrawInWorld() {
               cGridCol, 0.5);
    }
 
-   /* --- 2. Hàng đợi tối đa 3 hộp trên mỗi băng chuyền, xếp chồng theo
-    * chiều cao cho gọn trong ô 0.2 m (không đủ chỗ dàn hàng ngang) --- */
+   /* Hàng đợi hộp trên băng chuyền: xếp chồng theo chiều cao */
    for(const CGridLoopFunctions::SConveyor& sConv : LF().GetConveyors()) {
       for(size_t k = 0; k < sConv.Queue.size(); ++k) {
          DrawBox(CVector3(RowToWorldX(sConv.Cell.Row),
@@ -104,7 +97,7 @@ void CGridQTUserFunctions::DrawInWorld() {
       }
    }
 
-   /* --- 3. "Hologram" màu đang yêu cầu lơ lửng trên ô mặt kệ --- */
+   /* Hologram màu đang yêu cầu, lơ lửng trên ô mặt kệ */
    for(const CGridLoopFunctions::SDemand& sDem : LF().GetDemands()) {
       if(!sDem.Active) continue;
       SGridCell sFace = StackFaceCell(sDem.Cell, false);
@@ -115,7 +108,6 @@ void CGridQTUserFunctions::DrawInWorld() {
               BoxCColor(sDem.Color));
    }
 
-   /* --- 4. Bảng tổng kết ở mép Tây nhà kho --- */
    std::ostringstream ossTotal;
    ossTotal << "DA GIAO: " << LF().GetDeliveredTotal();
    DrawText(CVector3(-HALF_SPAN + 0.3, -HALF_SPAN + 0.3, 0.4), ossTotal.str());

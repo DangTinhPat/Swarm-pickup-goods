@@ -309,22 +309,38 @@ argos3 -c experiments/grid_swarm.argos     # mở ở trạng thái tạm dừng
 
 ## 9. Cấu trúc mã nguồn
 
+Mỗi file một nhóm chức năng — không có file "khổng lồ" nào vượt ~250 dòng:
+
 ```text
 grid-swarm-robot/
-├── grid_layout.h                    ← NGUỒN CHÂN LÝ hình học: kích thước lưới,
-│                                       công thức ánh xạ, vị trí trạm, giao thức RAB
-├── controllers/footbot_grid/
-│   ├── footbot_grid.h               ← khai báo controller + FSM + tham số
-│   ├── footbot_grid.cpp             ← vòng đời ControlStep, FSM, claim việc, pin
-│   ├── footbot_grid_nav.cpp         ← định vị QR, A*, P-controller
-│   └── footbot_grid_traffic.cpp     ← đặt chỗ, ưu tiên, dạt làn 3 bước
-├── loop_functions/grid_loop_functions/
-│   ├── grid_loop_functions.{h,cpp}  ← bảng đen: reservation theo tick, bảng việc,
-│   │                                   pin định lượng, an toàn, thống kê
-│   ├── grid_floor_render.cpp        ← GetFloorColor() — nguồn dữ liệu cảm biến sàn
-│   └── grid_qt_user_functions.{h,cpp} ← DrawInWorld() (≈ PostDraw): lớp che QR,
-│                                         lưới 3D, hộp hàng, nhãn robot
-└── experiments/grid_swarm.argos     ← kịch bản: arena, vật cản, 10 robot, camera
+├── common/                              NGUỒN CHÂN LÝ dùng chung 2 phía
+│   ├── grid_geometry.h                  kích thước lưới + ánh xạ tọa độ ⇄ ma trận
+│   ├── grid_map.h                       bố cục: kệ / dock / băng chuyền / loại ô
+│   ├── grid_protocol.h                  màu hộp, mức ưu tiên, layout gói RAB
+│   └── grid_layout.h                    header ô dù (gom 3 file trên)
+│
+├── controllers/footbot_grid/            BỘ NÃO PHI TẬP TRUNG (mỗi robot)
+│   ├── footbot_grid.h                   khai báo class + FSM + tham số
+│   ├── footbot_grid.cpp                 vòng đời ControlStep, LED, tiện ích
+│   ├── footbot_grid_fsm.cpp             máy trạng thái + chính sách pin 20/70
+│   ├── footbot_grid_localization.cpp    odometry + chốt QR sàn (khử drift)
+│   ├── footbot_grid_pathfinding.cpp     A* 4 hướng, phạt rẽ, cấm vật cản
+│   ├── footbot_grid_steering.cpp        P-controller vi sai bám tâm ô
+│   ├── footbot_grid_traffic.cpp         đặt-trước-đi-sau + phân xử ưu tiên
+│   ├── footbot_grid_detour.cpp          dạt làn cục bộ 3 bước / đứng nhường
+│   └── footbot_grid_comms.cpp           đóng/mở gói bản tin RAB 16 byte
+│
+├── loop_functions/grid_loop_functions/  BẢNG ĐEN THỤ ĐỘNG + hạ tầng
+│   ├── grid_loop_functions.{h,cpp}      vòng đời Init/Reset/PostStep (điều phối)
+│   ├── grid_reservations.cpp            ma trận Grid[Tick][(Row,Col)]=RobotID
+│   ├── grid_task_board.cpp              claim/bốc/giao + sinh hộp/yêu cầu màu
+│   ├── grid_docks.cpp                   trạng thái dock ẩn danh hai biên
+│   ├── grid_energy_safety.cpp           pin định lượng + giám sát khoảng cách
+│   ├── grid_metrics.cpp                 log định kỳ + tổng kết cuối phiên
+│   ├── grid_floor_render.cpp            GetFloorColor — nguồn cảm biến sàn
+│   └── grid_qt_user_functions.{h,cpp}   DrawInWorld (≈ PostDraw): che QR, vẽ 3D
+│
+└── experiments/grid_swarm.argos         kịch bản: arena, vật cản, 10 robot, camera
 ```
 
 > 🔗 Controller gọi trực tiếp API bảng đen (phụ thuộc 2 chiều) → cả hai biên dịch chung **một** `libgrid_loop_functions.so` (bộ nạp động của ARGoS không phân giải được typeinfo chéo giữa 2 thư viện nạp tuần tự).
