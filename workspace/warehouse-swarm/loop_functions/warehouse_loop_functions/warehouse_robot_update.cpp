@@ -49,14 +49,27 @@ void CWarehouseLoopFunctions::UpdateRobots(const UInt8* pun_queue_lens, const bo
 
       cController.SetBeltGroundTruth(pun_queue_lens, pb_blocked);
 
+      CBatteryEquippedEntity& cBattery = cFootBot.GetBatterySensorEquippedEntity();
+
+      std::map<std::string, CVector2>::iterator itLast =
+         m_mapLastPos.find(cFootBot.GetId());
+      if(itLast != m_mapLastPos.end()) {
+         Real fStep = (cPos - itLast->second).Length();
+
+         Real fDrain = m_fDrainTime + m_fDrainMove * fStep;
+         cBattery.SetAvailableCharge(
+            Max<Real>(0.0, cBattery.GetAvailableCharge() - fDrain));
+         itLast->second = cPos;
+      }
+      else {
+         m_mapLastPos[cFootBot.GetId()] = cPos;
+      }
+
       /* Charging bays: after a warm-up handshake on the bay, full power
        * flows (pad orange while warming up, green while charging). During
-       * warm-up the charge is clamped to a 1% protective floor — the
-       * battery's time-discharge keeps draining even while parked, and a
-       * robot that arrived a hair above the death floor could otherwise
-       * die mid-handshake right on the pad. This only ever pushes charge
-       * UP to 1%, never accelerating a healthy robot's charging. */
-      CBatteryEquippedEntity& cBattery = cFootBot.GetBatterySensorEquippedEntity();
+       * warm-up the charge is clamped to a 1% protective floor so a robot
+       * that arrived critically low can't dip under the death line while
+       * the handshake completes. This only ever pushes charge UP to 1%. */
       bool bOnBay = false;
       for(size_t s = 0; s < m_cDockSlots.size(); ++s) {
          if((cPos - m_cDockSlots[s]).Length() < 0.18) {

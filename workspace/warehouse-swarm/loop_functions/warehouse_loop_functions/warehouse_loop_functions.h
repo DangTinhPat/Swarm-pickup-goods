@@ -138,6 +138,11 @@ private:
    Real   m_fChargeRate;      /* charge fraction added per tick on a bay */
    UInt32 m_unChargeWarmup;   /* ticks on the bay before power flows */
 
+
+   Real m_fDrainTime;         /* charge drained per tick regardless of motion */
+   Real m_fDrainMove;         /* charge drained per metre travelled */
+   std::map<std::string, CVector2> m_mapLastPos;  /* for per-tick step distance */
+
    std::deque<UInt8> m_cQueues[NUM_BELTS];
 
    /* Metrics */

@@ -73,6 +73,7 @@
                dock_center="0,0" dock_rows="5" dock_cols="2" dock_spacing_x="0.55" dock_spacing_y="6.9" zone_half="0.4"
                spawn_period="36" queue_cap="6" pickup_radius="0.35"
                charge_rate="0.002667" charge_warmup="50"
+               drain_time="0.00002" drain_move="0.008"
                stigmergy_decay="0.998" stigmergy_gain="1.0" />
   </loop_functions>
 
@@ -135,23 +136,10 @@
       <entity quantity="10" max_trials="100">
         <foot-bot id="fb" rab_range="3" rab_data_size="14">
           <controller config="fwc" />
-          <!-- Battery: drains with distance driven + a small idle drain.
-               full_charge=6 -> 6x the ARGoS default (3x, then another 2x).
-               The discharge factors below are the PHYSICAL per-meter/
-               per-tick drain and are untouched by this — raising
-               full_charge alone makes the same physical drain consume a
-               smaller share of the reported (0..1) fraction, so the
-               robot simply goes proportionally farther per charge.
-               charge_rate below (fraction/tick) is also untouched, so
-               time to fully charge stays the same regardless of
-               capacity — charging speed and capacity are independent
-               here by design. -->
-          <battery discharge_model="time_motion"
+
+          <battery discharge_model="time" delta="0.0"
                    full_charge="6.0"
-                   start_charge="6.0"
-                   time_factor="0.00002"
-                   pos_factor="0.008"
-                   orient_factor="0.0005" />
+                   start_charge="6.0" />
         </foot-bot>
       </entity>
     </distribute>

@@ -10,21 +10,21 @@ Hệ thống mô phỏng nhà kho thông minh theo mô hình Amazon Kiva / Geek+
 
 ## 📋 Mục lục
 
-1. [Tổng quan hệ thống](#1-tổng-quan-hệ-thống)
-2. [Kiến trúc phần mềm](#2-kiến-trúc-phần-mềm)
-3. [Bản đồ & hệ tọa độ](#3-bản-đồ--hệ-tọa-độ)
-4. [Ngăn xếp thuật toán](#4-ngăn-xếp-thuật-toán)
+1. [Hệ thống phân loại hàng trên lưới rời rạc](#1-hệ-thống-phân-loại-hàng-trên-lưới-rời-rạc)
+2. [Kiến trúc phần mềm module hoá](#2-kiến-trúc-phần-mềm-module-hoá)
+3. [Bản đồ và hệ tọa độ lưới](#3-bản-đồ-và-hệ-tọa-độ-lưới)
+4. [Ngăn xếp thuật toán: định vị, MAPF, nhường đường](#4-ngăn-xếp-thuật-toán-định-vị-mapf-nhường-đường)
 5. [Máy trạng thái nhiệm vụ](#5-máy-trạng-thái-nhiệm-vụ)
-6. [Mô hình năng lượng](#6-mô-hình-năng-lượng-hysteresis-20--70-)
-7. [Kết quả thực nghiệm](#7-kết-quả-thực-nghiệm)
-8. [Build & Chạy](#8-build--chạy)
-9. [Cấu trúc mã nguồn](#9-cấu-trúc-mã-nguồn)
-10. [Tham số tinh chỉnh](#10-tham-số-tinh-chỉnh)
-11. [Giới hạn đã biết & hướng phát triển](#11-giới-hạn-đã-biết--hướng-phát-triển)
+6. [Mô hình năng lượng (hysteresis 20% / 70%)](#6-mô-hình-năng-lượng-hysteresis-20--70-)
+7. [Kết quả thực nghiệm và benchmark](#7-kết-quả-thực-nghiệm-và-benchmark)
+8. [Build và chạy mô phỏng](#8-build-và-chạy-mô-phỏng)
+9. [Tổ chức mã nguồn theo module](#9-tổ-chức-mã-nguồn-theo-module)
+10. [Tham chiếu tham số tinh chỉnh](#10-tham-chiếu-tham-số-tinh-chỉnh)
+11. [Giới hạn đã biết và lộ trình](#11-giới-hạn-đã-biết-và-lộ-trình)
 
 ---
 
-## 1. Tổng quan hệ thống
+## 1. Hệ thống phân loại hàng trên lưới rời rạc
 
 | Thành phần | Định lượng |
 |---|---|
@@ -41,7 +41,7 @@ Hệ thống mô phỏng nhà kho thông minh theo mô hình Amazon Kiva / Geek+
 
 ---
 
-## 2. Kiến trúc phần mềm
+## 2. Kiến trúc phần mềm module hoá
 
 Ba tầng tách bạch: **robot tự trị** (trái) — **bảng đen thụ động** (phải) — engine vật lý (dưới). Bảng đen chỉ *ghi nhận và trả lời*, không bao giờ ra lệnh.
 
@@ -68,7 +68,7 @@ flowchart TB
 
 ---
 
-## 3. Bản đồ & hệ tọa độ
+## 3. Bản đồ và hệ tọa độ lưới
 
 ### 3.1 Sơ đồ mặt bằng (30 × 30 ô = 6 × 6 m)
 
@@ -121,7 +121,7 @@ flowchart TB
 
 ---
 
-## 4. Ngăn xếp thuật toán
+## 4. Ngăn xếp thuật toán: định vị, MAPF, nhường đường
 
 | Tầng | Thuật toán | Tần suất gọi | File |
 |---|---|---|---|
@@ -251,7 +251,7 @@ stateDiagram-v2
 
 ---
 
-## 7. Kết quả thực nghiệm
+## 7. Kết quả thực nghiệm và benchmark
 
 Điều kiện: seed 42 · 12 000 tick = **20 phút mô phỏng** · headless (~7 000 tick/s thực → chạy hết trong ~2 s).
 
@@ -277,7 +277,7 @@ argos3 -c /tmp/gs.argos 2>&1 | grep -E "Delivered total|Emergencies|VA CHAM|dat 
 
 ---
 
-## 8. Build & Chạy
+## 8. Build và chạy mô phỏng
 
 ```bash
 # 1. Mở container ARGoS (host)
@@ -307,7 +307,7 @@ argos3 -c experiments/grid_swarm.argos     # mở ở trạng thái tạm dừng
 
 ---
 
-## 9. Cấu trúc mã nguồn
+## 9. Tổ chức mã nguồn theo module
 
 Mỗi file một nhóm chức năng — không có file "khổng lồ" nào vượt ~250 dòng:
 
@@ -347,7 +347,7 @@ grid-swarm-robot/
 
 ---
 
-## 10. Tham số tinh chỉnh
+## 10. Tham chiếu tham số tinh chỉnh
 
 Tất cả nằm trong `experiments/grid_swarm.argos`:
 
@@ -366,7 +366,7 @@ Tất cả nằm trong `experiments/grid_swarm.argos`:
 
 ---
 
-## 11. Giới hạn đã biết & hướng phát triển
+## 11. Giới hạn đã biết và lộ trình
 
 **Chạm biên thân 0.169–0.170 m.** Ô 0.2 m = thân 0.17 m + biên 3 cm theo đặc tả — hai robot ở hai làn kề (tâm cách đúng 0.2 m) chỉ dư 3 cm. Trong 20 phút ghi nhận 32 sự kiện khoảng cách < 0.17 m, **toàn bộ nằm ở 0.1689–0.170 m** (lún ≤ 1 mm): đây là chạm biên hình học do dung sai chuyển động liên tục (quán tính + làm tròn tick của dynamics2d), *không phải* lỗi logic — bảng đặt chỗ chưa từng cấp một ô cho hai robot. Muốn biên tuyệt đối: tăng `CELL_SIZE` lên 0.22–0.25 m (và đồng bộ `.argos`).
 

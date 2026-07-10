@@ -22,6 +22,8 @@ CWarehouseLoopFunctions::CWarehouseLoopFunctions() :
    m_fPickupRadius(0.35),
    m_fChargeRate(0.004),
    m_unChargeWarmup(50),
+   m_fDrainTime(0.00002),
+   m_fDrainMove(0.008),
    m_unDelivered(0),
    m_unCollisionTicks(0),
    m_fMinPairDistance(1000.0),
@@ -73,6 +75,8 @@ void CWarehouseLoopFunctions::Init(TConfigurationNode& t_node) {
       GetNodeAttribute(tWh, "pickup_radius", m_fPickupRadius);
       GetNodeAttributeOrDefault(tWh, "charge_rate", m_fChargeRate, m_fChargeRate);
       GetNodeAttributeOrDefault(tWh, "charge_warmup", m_unChargeWarmup, m_unChargeWarmup);
+      GetNodeAttributeOrDefault(tWh, "drain_time", m_fDrainTime, m_fDrainTime);
+      GetNodeAttributeOrDefault(tWh, "drain_move", m_fDrainMove, m_fDrainMove);
       GetNodeAttributeOrDefault(tWh, "stigmergy_decay", m_fStigmergyDecay, m_fStigmergyDecay);
       GetNodeAttributeOrDefault(tWh, "stigmergy_gain", m_fStigmergyGain, m_fStigmergyGain);
    }
@@ -111,6 +115,7 @@ void CWarehouseLoopFunctions::Reset() {
    m_fSideActivity[0] = 0.0;
    m_fSideActivity[1] = 0.0;
    m_mapWasParked.clear();
+   m_mapLastPos.clear();
 }
 
 /****************************************/
