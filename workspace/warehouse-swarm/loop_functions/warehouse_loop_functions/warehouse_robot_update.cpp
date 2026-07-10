@@ -49,30 +49,20 @@ void CWarehouseLoopFunctions::UpdateRobots(const UInt8* pun_queue_lens, const bo
 
       cController.SetBeltGroundTruth(pun_queue_lens, pb_blocked);
 
-      /* Charging bays: after a 5 s docking handshake (warm-up) on the
-       * bay, full power flows. Pad: orange while warming up, green while
-       * charging. Leaving the bay resets the handshake.
-       *
-       * BUG FIXED HERE: during warm-up no charge was being added, yet
-       * the battery's own discharge model keeps draining a little every
-       * tick just for existing (the "time" component of time_motion) —
-       * a robot that reached the bay with only a hair above the death
-       * floor (0.005) could tick over into STATE_DEAD while sitting
-       * right on the pad, mid-handshake. A physically connected charger
-       * would never let that happen even during a negotiation delay, so
-       * the warm-up phase now clamps charge to a small protective floor
-       * (1%) instead of letting it free-fall — this never accelerates
-       * charging for a healthy robot (it only ever pushes UP to 1%, and
-       * any robot already above that is untouched), it just closes the
-       * death window for the rare critical-arrival case. */
+      /* Charging bays: after a warm-up handshake on the bay, full power
+       * flows (pad orange while warming up, green while charging). During
+       * warm-up the charge is clamped to a 1% protective floor — the
+       * battery's time-discharge keeps draining even while parked, and a
+       * robot that arrived a hair above the death floor could otherwise
+       * die mid-handshake right on the pad. This only ever pushes charge
+       * UP to 1%, never accelerating a healthy robot's charging. */
       CBatteryEquippedEntity& cBattery = cFootBot.GetBatterySensorEquippedEntity();
       bool bOnBay = false;
       for(size_t s = 0; s < m_cDockSlots.size(); ++s) {
          if((cPos - m_cDockSlots[s]).Length() < 0.18) {
             bOnBay = true;
-            /* Stigmergy: bump this side's trail on the false->true
-             * "just arrived" transition only (not every tick it sits
-             * there, or activity would climb without bound) */
+            /* Stigmergy: bump the side's trail only on the just-arrived
+             * transition, else activity would climb without bound. */
             bool& bWasParked = m_mapWasParked[cFootBot.GetId()];
             if(!bWasParked) {
                UInt32 unSide = SlotIsLeftSide(s) ? 0 : 1;
@@ -125,9 +115,7 @@ void CWarehouseLoopFunctions::UpdateRobots(const UInt8* pun_queue_lens, const bo
       }
    }
 
-   /* Repaint the floor when any bay changes status. (Reordered ahead of
-    * handover relative to the pre-split code — safe, since dock-status
-    * repainting and belt handover touch entirely disjoint state.) */
+   /* Repaint the floor when any bay changes status. */
    if(cStatusNow != m_unSlotStatus) {
       m_unSlotStatus = cStatusNow;
       m_pcFloor->SetChanged();

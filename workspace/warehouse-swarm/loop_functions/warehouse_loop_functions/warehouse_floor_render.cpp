@@ -35,14 +35,9 @@ CColor CWarehouseLoopFunctions::GetFloorColor(const CVector2& c_pos) {
    for(size_t s = 0; s < m_cDockSlots.size(); ++s) {
       if(Abs(c_pos.GetX() - m_cDockSlots[s].GetX()) < 0.45 &&
          Abs(c_pos.GetY() - m_cDockSlots[s].GetY()) < 0.45) {
-         /* Stigmergy: tint this side's approach area darker the more
-          * recent arrival activity it has seen — a real, fading trace
-          * in the environment (not a number handed to the controller)
-          * that a robot's actual ground sensor picks up when nearby,
-          * the same way an ant senses pheromone only where it currently
-          * stands. Base pad is GRAY80 (~200); busy fades it toward a
-          * darker gray, capped so it stays visually a "floor", not a
-          * black hole. */
+         /* Stigmergy: tint the side's approach area darker the more recent
+          * arrival activity it has seen — a real fading trace the robots'
+          * ground sensor reads when nearby, capped so it stays a "floor". */
          UInt32 unSide = SlotIsLeftSide(s) ? 0 : 1;
          Real fDarkness = Min<Real>(1.0, m_fSideActivity[unSide] / 6.0);
          UInt8 unLevel = (UInt8)(200 - 90 * fDarkness);

@@ -12,12 +12,12 @@
 
 /* Parked robots align to this heading (facing the belts) for neat rows */
 static const CRadians DOCK_HEADING = CRadians::ZERO;
-/* Final docking maneuver: inside this distance of the target bay the
- * robot ignores the potential field and creeps straight onto the pad —
- * otherwise separation pushes from parked neighbors can hold it in an
- * equilibrium just outside the charging radius, "parked" but not
- * charging. */
+/* Inside this distance of the bay the robot drops the potential field and
+ * creeps straight onto the pad (see the final-approach branch below). */
 static const Real PRECISE_DOCK_DIST = 0.35;
+/* After a scouting trip an idle robot rests parked this many ticks before it
+ * may patrol again (jittered by id so the fleet doesn't scout in lockstep). */
+static const UInt32 PATROL_COOLDOWN = 250;
 
 /****************************************/
 /****************************************/
@@ -72,6 +72,8 @@ CFootBotWarehouse::CFootBotWarehouse() :
    m_eState(STATE_IDLE),
    m_nCarryAddr(-1),
    m_nBeltChoice(-1),
+   m_unDecisionLockUntil(0),
+   m_unPatrolHoldUntil(0),
    m_nAvoidSign(0),
    m_nDockSlot(-1),
    m_fStuckRefGoalDist(-1.0),
@@ -166,6 +168,8 @@ void CFootBotWarehouse::Reset() {
    m_eState = STATE_IDLE;
    m_nCarryAddr = -1;
    m_nBeltChoice = -1;
+   m_unDecisionLockUntil = 0;
+   m_unPatrolHoldUntil = 0;
    m_nDockSlot = -1;
    m_unTickCount = 0;
    for(UInt32 i = 0; i < NUM_BELTS; ++i) {
@@ -191,70 +195,48 @@ void CFootBotWarehouse::ControlStep() {
    m_fCharge = m_pcBattery->GetReading().AvailableCharge;
    SenseBelts();
 
-   /* 0a. Battery empty: the robot bricks where it stands. Neighbors
-    * still avoid it via separation + proximity (it became an obstacle). */
+   /* Battery empty: brick in place. Neighbors still avoid the corpse via
+    * separation + proximity, and it must release any charging bay it held. */
    if(m_fCharge <= 0.005) {
       m_eState = STATE_DEAD;
-      m_nDockSlot = -1;   /* a corpse must not keep a charging bay claimed */
+      m_nDockSlot = -1;
       m_pcWheels->SetLinearVelocity(0.0, 0.0);
       m_pcLEDs->SetAllColors(CColor::BLACK);
       Broadcast();
       return;
    }
 
-   /* 1. Listen: count colleagues inbound to each belt */
    for(UInt32 i = 0; i < NUM_BELTS; ++i) m_unInbound[i] = 0;
    ProcessMessages();
 
-   /* 0b. Energy policy: a flat threshold, not a distance prediction.
-    * With the fleet's battery sized generously relative to the facility
-    * (a full lap of the 8x8 m floor costs a small fraction of a charge),
-    * there is no need to estimate the trip cost — going to charge only
-    * once truly low is simpler and, at this capacity, still safe.
-    * Deliveries are never abandoned: charge is only checked for
-    * robots that are not already carrying a parcel. */
+   /* Energy policy: a flat threshold (the battery is large relative to the
+    * facility, so no per-trip distance prediction is needed). A carrying
+    * robot is never diverted to charge. */
    if(m_eState == STATE_CHARGE) {
-      if(m_fCharge >= m_fResumeCharge) {
-         m_eState = STATE_IDLE;   /* stay parked; bidding resumes below */
-      }
+      if(m_fCharge >= m_fResumeCharge) m_eState = STATE_IDLE;
    }
    else if(m_eState != STATE_DELIVER && m_fCharge < m_fHardChargeThreshold) {
       m_eState = STATE_CHARGE;
       m_nBeltChoice = -1;
    }
 
-   /* 2. Bid for work (only when free and sufficiently charged):
-    * re-evaluate when uncommitted, and periodically so stale
-    * commitments adapt to new information */
+   /* Bid for work. The re-bid cadence is staggered by robot id so decisions
+    * trickle out one robot at a time rather than the whole dock reacting to
+    * the same parcel on the same tick. ChooseBelt itself is anti-dither
+    * (sticky commitment); this only paces how often it runs. */
    if(m_eState == STATE_IDLE || m_eState == STATE_TO_BELT) {
-      /* Re-bid on a staggered schedule (by robot id), including while
-       * idle: decisions trickle out one robot at a time instead of the
-       * whole dock reacting to the same parcel on the same tick with
-       * nobody's claims heard yet. Uncommitted robots check often,
-       * committed ones only occasionally. */
       bool bEvaluate = (m_nBeltChoice < 0)
                        ? ((m_unTickCount + m_unRobotId) % 3 == 0)
                        : ((m_unTickCount + m_unRobotId) % 10 == 0);
-      if(bEvaluate) {
-         ChooseBelt();
-      }
+      if(bEvaluate) ChooseBelt();
       m_eState = (m_nBeltChoice >= 0) ? STATE_TO_BELT : STATE_IDLE;
-      /* Got work: release my parking slot */
-      if(m_eState == STATE_TO_BELT) {
-         m_nDockSlot = -1;
-      }
+      if(m_eState == STATE_TO_BELT) m_nDockSlot = -1;
    }
 
-   /* 2.5. Unified stuck/rescue check — evaluated BEFORE the emergency
-    * proximity reflex (step 3) and for EVERY active navigation state,
-    * not just docking. Without this ordering, a robot wedged against a
-    * wall/pillar corner keeps the reflex perpetually re-triggering
-    * (proximity never clears), which returns early every single tick
-    * and starves this check of any chance to ever run — exactly how a
-    * robot ends up permanently stuck at a corner despite the mechanism
-    * existing. Checking first guarantees it always gets sampled, and
-    * once it decides to escalate, it owns the wheels for its own escape
-    * duration, overriding the reflex for those ticks. */
+   /* Stuck/rescue check — runs BEFORE the proximity reflex and for every
+    * active state. A robot wedged in a corner keeps the reflex firing
+    * (proximity never clears), which would return early forever and starve
+    * the escape logic; checking first guarantees it always gets a turn. */
    {
       CVector2 cTarget;
       bool bExempt = false;
@@ -264,20 +246,13 @@ void CFootBotWarehouse::ControlStep() {
             break;
          case STATE_TO_BELT:
             cTarget = m_cBelt[m_nBeltChoice];
-            /* Normal queueing near a busy bin isn't "stuck" */
-            bExempt = (cTarget - m_cPos).Length() < 0.45;
+            bExempt = (cTarget - m_cPos).Length() < 0.45;  /* queueing != stuck */
             break;
          case STATE_IDLE: {
-            /* Stale info on some belt? Go look — a genuinely idle robot
-             * that never patrols would leave the fleet permanently blind
-             * to any belt no one has driven past recently (see
-             * NeedsBeltPatrol). A robot in STATE_CHARGE never does this
-             * — it heads straight for the dock regardless. */
             CVector2 cPatrol;
-            if(NeedsBeltPatrol(cPatrol)) {
+            if(PatrolReady() && NeedsBeltPatrol(cPatrol)) {
                cTarget = cPatrol;
                bExempt = (cTarget - m_cPos).Length() < m_fBeltSenseRange;
-               /* Don't hog a parking bay while off patrolling */
                m_nDockSlot = -1;
             }
             else {
@@ -296,19 +271,11 @@ void CFootBotWarehouse::ControlStep() {
       }
    }
 
-   /* 3. Collision imminent? Two-stage override (same as ball-collector):
-    * moving turn above threshold, pivot in place above 3x threshold.
-    * SUPPRESSED only once TRULY parked (< DOCKED_DIST of my own bay —
-    * matches the freeze branch in step 4): a stationary docked robot
-    * must not react to a neighbor parking next door. While still
-    * CREEPING IN (DOCKED_DIST..PRECISE_DOCK_DIST) the reflex stays ON,
-    * using the same committed-turn logic as everywhere else in the
-    * facility — this used to be a bespoke "stop and wait for the
-    * blocker to move" rule with no escape: two robots converging on
-    * adjacent bays at the same moment could freeze each other forever
-    * and starve to death right next to an empty charger. The ordinary
-    * reflex always resolves (it turns, never just waits), so reusing it
-    * here removes the deadlock. */
+   /* Emergency collision reflex: two-stage override (moving turn, then
+    * pivot in place above 3x threshold). Suppressed only once TRULY parked
+    * so a docked robot ignores a neighbor parking next door; while still
+    * creeping in it stays on and simply turns (never a bespoke wait, which
+    * once let two robots converging on adjacent bays freeze each other). */
    bool bTrulyParked =
       (m_eState == STATE_CHARGE || m_eState == STATE_IDLE) &&
       m_nDockSlot >= 0 &&
@@ -326,26 +293,20 @@ void CFootBotWarehouse::ControlStep() {
                        ? 0.5 * m_sWheelTurningParams.MaxSpeed
                        : m_sWheelTurningParams.MaxSpeed;
          Real fInner = -0.5 * m_sWheelTurningParams.MaxSpeed;
-         /* Commit to one turn direction for the whole encounter: a
-          * dead-ahead obstacle flips the accumulator's angle sign every
-          * tick, and turning with it would jitter in place forever */
+         /* Commit to one turn direction: a dead-ahead obstacle flips the
+          * accumulator's sign every tick, so following it jitters forever. */
          if(m_nAvoidSign == 0) {
             m_nAvoidSign = (cProxAccum.Angle() > CRadians::ZERO) ? -1 : 1;
          }
-         if(m_nAvoidSign < 0) {
-            m_pcWheels->SetLinearVelocity(fOuter, fInner);
-         }
-         else {
-            m_pcWheels->SetLinearVelocity(fInner, fOuter);
-         }
+         if(m_nAvoidSign < 0) m_pcWheels->SetLinearVelocity(fOuter, fInner);
+         else                 m_pcWheels->SetLinearVelocity(fInner, fOuter);
          Broadcast();
          return;
       }
-      /* Obstacle cleared: forget the committed turn direction */
       m_nAvoidSign = 0;
    }
 
-   /* 4. Potential-field motion */
+   /* Potential-field motion */
    CVector2 cGoal;
    switch(m_eState) {
       case STATE_DELIVER:
@@ -354,42 +315,33 @@ void CFootBotWarehouse::ControlStep() {
          break;
       case STATE_TO_BELT:
          cGoal = VectorToPoint(m_cBelt[m_nBeltChoice]);
-         /* Approach the bin gently so LJ separation can order the
-          * waiting robots instead of them shoving each other */
-         if((m_cBelt[m_nBeltChoice] - m_cPos).Length() < 0.6) {
-            cGoal *= 0.5;
-         }
+         if((m_cBelt[m_nBeltChoice] - m_cPos).Length() < 0.6) cGoal *= 0.5;
          m_pcLEDs->SetAllColors(CColor::CYAN);
          break;
       case STATE_IDLE: {
          CVector2 cPatrol;
-         if(NeedsBeltPatrol(cPatrol)) {
-            /* Off to sense a belt whose info has gone stale — plain
-             * potential-field travel, same as heading to a belt with a
-             * confirmed job, just without one yet */
+         if(PatrolReady() && NeedsBeltPatrol(cPatrol)) {
+            Real fD = (cPatrol - m_cPos).Length();
             cGoal = VectorToPoint(cPatrol);
-            if((cPatrol - m_cPos).Length() < 0.6) {
-               cGoal *= 0.5;
+            if(fD < 0.6) cGoal *= 0.5;
+            /* Reached the belt: info refreshed — now rest before scouting
+             * again so a surplus robot settles rather than shuffling. */
+            if(fD < m_fBeltSenseRange) {
+               m_unPatrolHoldUntil = m_unTickCount + PATROL_COOLDOWN + (m_unRobotId % 60);
             }
             m_pcLEDs->SetAllColors(CColor::YELLOW);
             break;
          }
-         /* Nothing stale: normal dock idling, same as STATE_CHARGE below */
-         [[fallthrough]];
+         [[fallthrough]];   /* nothing stale (or resting): idle at the dock */
       }
       case STATE_CHARGE:
       default: {
-         /* Dock: claim a free parking slot and park in it, neatly.
-          * Parking bays double as chargers, so an idle robot tops up
-          * opportunistically; a STATE_CHARGE robot is just one that is
-          * REQUIRED to be here (blue LED) until resume_charge. */
+         /* Dock bays double as chargers: an idle robot (green) tops up
+          * opportunistically, a STATE_CHARGE robot (blue) is required to. */
          m_pcLEDs->SetAllColors(m_eState == STATE_CHARGE ? CColor::BLUE
                                                          : CColor::GREEN);
-         /* m_nDockSlot was already resolved in step 2.5 above (it needs
-          * to exist before the stuck-check can pick a target) */
          if(m_nDockSlot < 0) {
-            /* No free slot heard of (transient): hold near the nearest
-             * bay row until claims sort themselves out */
+            /* No free slot heard of yet: hold near the nearest bay row. */
             Real fBest = 1.0e9;
             CVector2 cNearest;
             for(size_t s = 0; s < m_cDockSlots.size(); ++s) {
@@ -402,10 +354,8 @@ void CFootBotWarehouse::ControlStep() {
          }
          Real fDist = (m_cDockSlots[m_nDockSlot] - m_cPos).Length();
          if(fDist < DOCKED_DIST) {
-            /* Parked. Align to the common heading, then freeze — do NOT
-             * follow the potential field, or passing robots would drag
-             * the whole row around. The proximity reflex above still
-             * protects against real emergencies. */
+            /* Parked: align to the common heading then freeze (following the
+             * field here would let passing robots drag the whole row). */
             CRadians cErr = (DOCK_HEADING - m_cYaw).SignedNormalize();
             if(Abs(cErr) > CRadians(0.15)) {
                Real fTurn = 0.2 * m_sWheelTurningParams.MaxSpeed;
@@ -418,10 +368,8 @@ void CFootBotWarehouse::ControlStep() {
             Broadcast();
             return;
          }
-         /* Final docking maneuver: creep straight onto the pad with the
-          * potential field OFF — separation from parked neighbors must
-          * not be able to hold us just outside the charging radius.
-          * (Bays are 0.55 apart, physics cannot make bodies overlap.) */
+         /* Final approach: creep straight onto the pad with the field OFF so
+          * a parked neighbor's separation can't hold us outside the radius. */
          if(fDist < PRECISE_DOCK_DIST) {
             cGoal = VectorToPoint(m_cDockSlots[m_nDockSlot]);
             cGoal *= Max<Real>(0.25, Min<Real>(1.0, fDist / 0.4));
@@ -429,16 +377,13 @@ void CFootBotWarehouse::ControlStep() {
             Broadcast();
             return;
          }
-         /* Approach with arrival damping so the robot settles exactly
-          * on the slot instead of orbiting it at full speed */
          cGoal = VectorToPoint(m_cDockSlots[m_nDockSlot]);
-         cGoal *= Min<Real>(1.0, fDist / 0.4);
+         cGoal *= Min<Real>(1.0, fDist / 0.4);   /* arrival damping */
          break;
       }
    }
    SetWheelSpeedsFromVector(cGoal + SeparationVector() + ObstacleVector() + PillarField());
 
-   /* 5. Tell the neighborhood what I am doing */
    Broadcast();
 }
 

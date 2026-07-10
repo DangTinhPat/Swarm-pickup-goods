@@ -13,20 +13,13 @@
  *   [8-13]  belt gossip, 2 bytes per belt (see SBeltBelief):
  *             byte0 = Queue (0..queue_cap)
  *             byte1 = bit7 Blocked | bits0-6 Age (0..127, saturated)
- *           GOSSIP, NOT A GLOBAL FEED: a robot only has fresh (Age=0)
- *           belt info when it was physically close enough to sense it
- *           itself (see SenseBelts); everyone else's knowledge comes
- *           purely from repeating what a neighbor said, aging every
- *           tick — classic epidemic/gossip propagation, so information
- *           about a belt takes real (simulated) time to reach a robot
- *           on the far side of the facility, exactly like real limited-
- *           range swarm communication.
  *
- * A dead/stuck robot squatting on a belt's pickup point rides the same
- * channel: the loop functions fold that fact into the belt's own
- * Blocked bit (see SetBeltGroundTruth) rather than a separate distress
- * message — to the fleet, "this belt is unusable" is the same fact
- * whether the cause is a full queue or a corpse on the pickup point.
+ * Belt info is GOSSIP, not a global feed: a robot knows a belt firsthand
+ * only when close enough to sense it (SenseBelts); everyone else relays
+ * what a neighbor said, aging every tick — classic epidemic propagation,
+ * so news crosses the facility in real (simulated) time. A dead robot
+ * squatting on a pickup point rides the same channel as the belt's own
+ * Blocked bit (SetBeltGroundTruth) rather than a separate distress message.
  */
 #include "footbot_warehouse.h"
 #include <argos3/core/utility/datatypes/byte_array.h>
@@ -71,14 +64,9 @@ UInt32 CFootBotWarehouse::BeltAge(UInt32 un_belt) const {
 /****************************************/
 
 void CFootBotWarehouse::SenseBelts() {
-   /* Direct local sensing: within range, a real proximity/camera sensor
-    * would read the belt's true queue depth and whether its pickup
-    * point is obstructed — stamp the belief as confirmed THIS tick.
-    * Out of range, nothing to do here: age is always DERIVED from
-    * (now - OriginTick), never separately incremented, which is exactly
-    * what makes this immune to the mutual-refresh gossip bug (see the
-    * header comment on SBeltBelief). ProcessMessages() may still adopt
-    * a neighbor's more recent OriginTick. */
+   /* Direct local sensing: within range, confirm the belt's true queue and
+    * blocked flag and stamp the belief with this tick. Age is only ever
+    * derived from (now - OriginTick), never incremented separately. */
    for(UInt32 b = 0; b < NUM_BELTS; ++b) {
       Real fDist = (m_cBelt[b] - m_cPos).Length();
       if(fDist < m_fBeltSenseRange) {
@@ -93,17 +81,21 @@ void CFootBotWarehouse::SenseBelts() {
 /****************************************/
 
 bool CFootBotWarehouse::NeedsBeltPatrol(CVector2& c_target) const {
+   /* Scout only when BLIND — every belt's info has aged out. If even one
+    * belt is fresh (sensed, or heard via gossip) the robot can bid on that
+    * and has no reason to trek off, which is exactly what kept surplus
+    * robots shuffling to far belts forever. Bootstrap still works: at
+    * startup every belt is unknown, so idle robots do go look. */
    SInt32 nBest = -1;
    Real fBestDist = 1.0e9;
    for(UInt32 b = 0; b < NUM_BELTS; ++b) {
-      if(BeltAge(b) < BELT_INFO_MAX_AGE) continue;
+      if(BeltAge(b) < BELT_INFO_MAX_AGE) return false;
       Real fDist = (m_cBelt[b] - m_cPos).Length();
       if(fDist < fBestDist) {
          fBestDist = fDist;
          nBest = b;
       }
    }
-   if(nBest < 0) return false;
    c_target = m_cBelt[nBest];
    return true;
 }
@@ -124,31 +116,15 @@ void CFootBotWarehouse::ProcessMessages() {
       m_tNeighbors.push_back({tPackets[i].Range,
                               tPackets[i].HorizontalBearing,
                               unState, unSenderId, unRescuing != 0});
-      /* Belt gossip: epidemic propagation — reconstruct the neighbor's
-       * OriginTick from their reported age and adopt it only if it is
-       * MORE RECENT than what I already have. Adopting a reconstructed
-       * absolute tick (not a relayed counter) is what makes this immune
-       * to mutual reinforcement: OriginTick only ever moves forward, so
-       * BeltAge() always reflects true elapsed time no matter how many
-       * hops or how often the same information gets re-heard.
-       *
-       * The "+1" matters: RAB has exactly one tick of propagation delay
-       * in ARGoS (a packet sent at tick T is read at T+1), so the
-       * sender's age was computed one tick before I receive it. Without
-       * adding that back, reconstruction UNDERSHOOTS by 1 tick at every
-       * single hop — harmless for a single hop, but the error is
-       * systematic and ADDS UP across a relay chain: information that
-       * bounces through N robots looks N ticks fresher than it really
-       * is, letting old data masquerade as recent indefinitely in a
-       * densely-connected fleet (found by tracing a belief that stayed
-       * at "age 1" for 80+ ticks straight while the real queue kept
-       * changing underneath it). Accounting for the delay explicitly
-       * keeps the reconstructed origin exact regardless of hop count. */
+      /* Belt gossip (epidemic propagation): reconstruct the neighbor's
+       * absolute OriginTick and adopt it only if newer than mine. Using an
+       * absolute tick (not a relayed "age" counter) keeps it monotonic and
+       * immune to mutual reinforcement between two in-range robots. The -1
+       * compensates RAB's fixed one-tick delay; without it the error would
+       * compound per hop and let stale data look perpetually fresh. */
       for(UInt32 b = 0; b < NUM_BELTS; ++b) {
          UInt8 unQueue, unFreshness;
          cData >> unQueue >> unFreshness;
-         /* Invert back (see Broadcast() for why the wire format is
-          * freshness, not literal age) */
          UInt32 unTheirAge = 127 - (unFreshness & 0x7F);
          bool bTheirBlocked = (unFreshness & 0x80) != 0;
          UInt32 unTheirOrigin = (unTheirAge + 1 >= m_unTickCount) ? 0 : (m_unTickCount - unTheirAge - 1);
@@ -158,15 +134,11 @@ void CFootBotWarehouse::ProcessMessages() {
             m_tBeltBelief[b].OriginTick = unTheirOrigin;
          }
       }
-      /* Dock bookkeeping: mark claimed slots. Conflicts over MY slot are
-       * resolved by POSSESSION: whoever is closer to the slot keeps it
-       * (computable from range+bearing), so a parked/charging robot can
-       * never be evicted by a distant claimer; ties break on id. */
+      /* Dock claims resolved by POSSESSION: whoever is closer to the slot
+       * keeps it (ties break on id), so a docked robot is never evicted by
+       * a distant claimer — only a still-approaching one can lose the race. */
       if(unDock < m_bSlotTaken.size()) {
          m_bSlotTaken[unDock] = true;
-         /* Once truly parked (physically on the bay), ownership is
-          * absolute — no stray/late claim can evict a docked robot. Only
-          * a still-approaching robot can lose the race to a closer one. */
          bool bImTrulyParked = (SInt8)unDock == m_nDockSlot &&
             (m_cDockSlots[unDock] - m_cPos).Length() < DOCKED_DIST;
          if((SInt8)unDock == m_nDockSlot && !bImTrulyParked) {
@@ -181,9 +153,8 @@ void CFootBotWarehouse::ProcessMessages() {
             }
          }
       }
-      /* Count only colleagues CLOSER to that belt than me: they are
-       * ahead of me in the implicit queue, the ones behind me are not
-       * my problem. This makes the swarm sort itself by distance. */
+      /* Count only colleagues closer to the belt than me (ahead of me in
+       * the implicit queue): this makes the swarm self-sort by distance. */
       if(unState == STATE_TO_BELT && unBelt < NUM_BELTS) {
          Real fTheirDist = unDist * 0.04;
          Real fMyDist = (m_cBelt[unBelt] - m_cPos).Length();
@@ -212,23 +183,14 @@ void CFootBotWarehouse::Broadcast() {
    cData << (UInt8)(m_nCarryAddr >= 0 ? m_nCarryAddr : NO_BYTE);
    cData << (UInt8)(m_nDockSlot >= 0 ? m_nDockSlot : NO_BYTE);
    cData << (UInt8)(m_bRescuing ? 1 : 0);
-   /* Belt gossip: repeat my current belief for each belt so neighbors
-    * who haven't sensed it directly can still learn it, second-hand */
+   /* Belt gossip: relay my belief so neighbors can learn it second-hand.
+    * Age is encoded INVERTED (as freshness, high=fresh): ARGoS hands back
+    * an all-zero packet for a robot that has not broadcast yet, and if
+    * age=0 meant "freshest" that phantom would poison every belief to
+    * "empty" at startup. As freshness, a zero byte decodes to maximally
+    * stale, which can never beat genuine knowledge. */
    for(UInt32 b = 0; b < NUM_BELTS; ++b) {
       cData << m_tBeltBelief[b].Queue;
-      /* Encode age INVERTED (freshness, high=fresh) rather than
-       * literally. Why: at tick 1 (and potentially any time a neighbor
-       * hasn't broadcast recently), ARGoS's RAB sensor can hand back a
-       * default all-zero reading for a robot that has never called
-       * SetData yet — indistinguishable, byte-for-byte, from a real
-       * packet. If age=0 meant "just sensed, perfectly fresh" on the
-       * wire, that phantom packet would look like the most trustworthy
-       * possible sighting and instantly poison every real robot's
-       * belief to "every belt is empty" before the simulation even
-       * starts moving. Inverting means a phantom all-zero byte decodes
-       * to freshness=0 -> age=127 (maximally stale), which can never
-       * beat genuine knowledge; only a robot that truly just sensed
-       * something (Age=0) ever sends the wire value 127. */
       UInt8 unWireAge = (UInt8)Min<UInt32>(BeltAge(b), 127);
       UInt8 unFreshness = 127 - unWireAge;
       if(m_tBeltBelief[b].Blocked) unFreshness |= 0x80;

@@ -111,10 +111,8 @@ public:
    bool  WantsWork() const;
 
    /* ---- Belt status (footbot_comms.cpp) ---- */
-   /* Ground truth for the belts, handed to the controller so it can
-    * SENSE it (only trusted when physically close — see SBeltBelief);
-    * this is what the environment "would show" a real proximity/camera
-    * sensor, not a global broadcast the robot is allowed to always use. */
+   /* Belt ground truth the controller may only SENSE when close (never a
+    * global feed) — see SBeltBelief / SenseBelts. */
    void  SetBeltGroundTruth(const UInt8* pun_queues, const bool* pb_blocked);
 
    /* ---- Energy status (also read by the QT user functions for the HUD) ---- */
@@ -123,13 +121,9 @@ public:
 
 private:
 
-   /* Tuning constants shared across more than one behavior file — kept
-    * here, once, so the copies used by ControlStep/ProcessMessages/
-    * ComputeDockTarget (DOCKED_DIST) and by NeedsBeltPatrol/ChooseBelt
-    * (BELT_INFO_MAX_AGE) can never drift out of sync. Constants used by
-    * only a single .cpp stay local to that file instead (e.g. the
-    * market-utility weights in footbot_task_allocation.cpp). */
-   static constexpr UInt32 BELT_INFO_MAX_AGE = 100; /* ticks (~10s @ 10 ticks/s); belief older than this is "unknown" */
+   /* Constants shared by more than one behavior file live here once, so the
+    * copies can't drift; single-file constants stay local to that .cpp. */
+   static constexpr UInt32 BELT_INFO_MAX_AGE = 100; /* ticks; older belief = "unknown" */
    static constexpr Real   DOCKED_DIST = 0.05;      /* m; "truly parked" cutoff */
 
    /* ==== footbot_navigation.cpp — potential-field steering ==== */
@@ -147,13 +141,10 @@ private:
    /* Age in ticks since OriginTick; a huge value if never known */
    UInt32 BeltAge(UInt32 un_belt) const;
    void  SenseBelts();
-   /* Bootstrap/patrol: with NO global oracle, a robot that has never
-    * been near a belt (or whose info aged out) has no way to ever learn
-    * about it purely by sitting at the dock — it must occasionally go
-    * LOOK, the same way a real idle AMR fleet patrols stations rather
-    * than waiting for a call that will never come. Returns true (and
-    * fills c_target) when some belt's info is stale; false when
-    * everything is fresh, so normal dock-idling resumes. */
+   /* Bootstrap/patrol: with no global oracle, an idle robot must
+    * occasionally go LOOK at a belt whose info has aged out, or the fleet
+    * stays blind to belts nobody has driven past. Returns true (and fills
+    * c_target) when some belt is stale; false when everything is fresh. */
    bool  NeedsBeltPatrol(CVector2& c_target) const;
 
    /* ==== footbot_task_allocation.cpp — market-based belt bidding ==== */
@@ -161,44 +152,25 @@ private:
 
    /* ==== footbot_docking.cpp — dock-slot claiming + stigmergy ==== */
    void ChooseDockSlot();
-   /* Shared by step 2.5 (stuck-check target) and step 4 (movement) so
-    * they can never disagree on what "heading to dock" currently means */
+   /* Shared by the stuck-check and the movement step so they agree on what
+    * "heading to dock" means. */
    CVector2 ComputeDockTarget(bool& b_exempt);
-   /* Which physical side a slot belongs to (dock rows are at y>0 and
-    * y<0 — see the facility map) */
    bool SlotIsLeftSide(size_t un_slot) const {
       return m_cDockSlots[un_slot].GetY() > 0.0;
    }
-   /* Stigmergy (dock-side congestion avoidance): the environment itself
-    * carries a fading trace of how much each dock side has been used
-    * recently (painted as a gray tint near each row, see the loop
-    * functions), sensed through the real ground sensor — not a number
-    * beamed into the controller. It only ever influences a robot that is
-    * ALREADY near a side (stigmergy is inherently local: you can only
-    * follow/react to a trail where you currently are), specifically the
-    * "waiting for a free slot" moment — reads as "this pile looks busy,
-    * let me try the other one", the same rejection behavior seen in ant
-    * nest-site selection. */
+   /* Stigmergy (dock-side congestion avoidance): a fading gray trace on the
+    * floor of how busy each dock side has been, sensed via the real ground
+    * sensor — inherently local, so it only sways a robot already near a
+    * side (like ant nest-site rejection). */
    Real GroundDarkness() const;
 
    /* ==== footbot_rescue.cpp — stuck detection / 2-level escape ==== */
-   /* TWO ESCALATING LEVELS, applied to every active navigation state
-    * (dock approach, belt approach, delivery) — not just docking. A wall
-    * corner can cancel the proximity-avoidance vector to near-zero (two
-    * walls' pushes nearly opposite each other), and 3+ robots converging
-    * on a resource can knot into a cluster that keeps shuffling without
-    * ever converging — neither looks like a hard stop, so raw
-    * displacement can't detect them. This instead tracks distance-TO-
-    * GOAL: if it fails to shrink over a rolling 3 s window, twice in a
-    * row (~6 s stuck) escalates:
-    *   Level 1 (light):  random-heading drive, 1.5 s.
-    *   Level 2 (deep):   after 2 light escapes still fail to help —
-    *                     straight reverse (pulls off a wedged contact
-    *                     that turning alone can't clear) then a longer
-    *                     random-heading drive, 3 s, broadcasting a
-    *                     "rescuing" flag so neighbors give it priority. */
-   /* Call with the CURRENT navigation target; returns true if it took
-    * over the wheels this tick (caller should just Broadcast+return) */
+   /* Tracks distance-TO-GOAL (not raw displacement, which can't tell a
+    * wedged/orbiting robot from a moving one): if it fails to shrink over
+    * two rolling 3 s windows, escalate — Level 1 a 1.5 s random-heading
+    * nudge, Level 2 (after repeated failure) a reverse-then-drive that
+    * broadcasts a "rescuing" flag so neighbors yield. Returns true if it
+    * took the wheels this tick (caller should Broadcast + return). */
    bool     UpdateStuckEscape(const CVector2& c_target);
 
    /* ==== Sensors & actuators ==== */
@@ -247,37 +219,30 @@ private:
    SInt8  m_nCarryAddr;    /* -1 = empty-handed */
    SInt8  m_nBeltChoice;   /* -1 = none */
    UInt8  m_unInbound[NUM_BELTS];  /* neighbors heading to each belt */
+   /* A belt commitment cannot change again until this tick (anti-dither) */
+   UInt32 m_unDecisionLockUntil;
 
-   /* Belt status: LOCAL sensing + gossip relay (see footbot_comms.cpp
-    * header comment for why this replaces a facility-wide oracle).
-    * Queue/Blocked are only trustworthy while the computed age
-    * (BeltAge()) is below BELT_INFO_MAX_AGE; ChooseBelt() treats a stale
-    * belief as "unknown" and will not bid on it.
-    *
-    * Stored as an ABSOLUTE tick (OriginTick: when this was last
-    * confirmed true), NOT a mutable "ticks-old" counter — a counter
-    * that gets directly overwritten by gossip is vulnerable to mutual
-    * reinforcement: if A and B keep hearing each other, each one's
-    * fresh local increment gets undone every tick by the other's
-    * still-low relayed value, so the belief never actually ages,
-    * indefinitely, even with zero real sensing (found by tracing a
-    * parked robot whose age stayed 0 for 80+ ticks while never once
-    * sensing anything). Deriving age fresh from (now - OriginTick)
-    * every time is immune to this: OriginTick only ever moves forward
-    * (adopt a gossiped one only if it's MORE recent than mine), so the
-    * computed age always reflects true elapsed simulation time. */
+   /* Belt status: local sensing + gossip relay (footbot_comms.cpp).
+    * Trustworthy only while BeltAge() < BELT_INFO_MAX_AGE. Stored as an
+    * absolute OriginTick (not a mutable "ticks-old" counter): age is always
+    * derived as now - OriginTick and OriginTick only ever moves forward,
+    * which keeps gossip immune to mutual-reinforcement staleness loops. */
    struct SBeltBelief {
       UInt8  Queue;
       bool   Blocked;
       UInt32 OriginTick;   /* 0 = never known */
    };
    SBeltBelief m_tBeltBelief[NUM_BELTS];
-   /* Ground truth handed in by the loop functions (see
-    * SetBeltGroundTruth); only copied into the belief above when the
-    * robot is physically close enough (SenseBelts) */
+   /* Ground truth from the loop functions; copied into the belief only
+    * when the robot is close enough to sense it (SenseBelts). */
    UInt8 m_unTrueQueue[NUM_BELTS];
    bool  m_bTrueBlocked[NUM_BELTS];
    Real  m_fBeltSenseRange;
+   /* Patrol cooldown: after one scouting trip a surplus robot rests parked
+    * (does not un-park to patrol) until this tick, so idle robots settle at
+    * the dock instead of shuffling belt-to-belt forever. */
+   UInt32 m_unPatrolHoldUntil;
+   bool PatrolReady() const { return m_unTickCount >= m_unPatrolHoldUntil; }
 
    /* Neighbors heard this tick, kept for priority-aware separation */
    struct SNeighbor {

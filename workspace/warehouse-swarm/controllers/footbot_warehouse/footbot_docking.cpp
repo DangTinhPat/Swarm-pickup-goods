@@ -35,12 +35,9 @@ CVector2 CFootBotWarehouse::ComputeDockTarget(bool& b_exempt) {
 /****************************************/
 
 Real CFootBotWarehouse::GroundDarkness() const {
-   /* Real ground sensor readings: 1.0 = white/floor, 0.0 = black. The
-    * loop functions paint the dock-area zone darker the more activity
-    * that side has recently seen (stigmergy), so darkness here is a
-    * purely local, physically-sensed proxy for "this side is busy" —
-    * a robot only ever perceives it once its own footprint is over
-    * the tinted patch, never from across the warehouse. */
+   /* Ground sensor: 1.0 = white floor, 0.0 = black. The loop functions
+    * tint each dock side darker the busier it has recently been, so
+    * darkness is a purely local, physically-sensed "this side is busy". */
    const CCI_FootBotMotorGroundSensor::TReadings& tReadings = m_pcGround->GetReadings();
    if(tReadings.empty()) return 0.0;
    Real fSum = 0.0;
@@ -54,14 +51,9 @@ Real CFootBotWarehouse::GroundDarkness() const {
 /****************************************/
 
 void CFootBotWarehouse::ChooseDockSlot() {
-   /* Nearest slot nobody claims (per the last round of broadcasts),
-    * with a stigmergic nudge away from a side I currently sense as
-    * busy (see the header comment on GroundDarkness for why this can
-    * only ever fire once already near a side, never from across the
-    * warehouse — that's the whole nature of stigmergy). The penalty is
-    * a soft, meters-equivalent score bump, not a hard exclusion: a much
-    * closer slot on the "busy" side still wins if the calmer side is
-    * far away, this only tips genuinely close calls. */
+   /* Nearest unclaimed slot, with a soft stigmergic penalty on slots on a
+    * side I currently sense as busy. The penalty is a meters-equivalent
+    * score bump, not a hard exclusion — it only tips genuinely close calls. */
    Real fDarkness = GroundDarkness();
    bool bImOnLeftSide = m_cPos.GetY() > 0.0;
    SInt8 nBest = -1;
