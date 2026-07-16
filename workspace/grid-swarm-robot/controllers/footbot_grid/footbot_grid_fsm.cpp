@@ -40,14 +40,43 @@ void CFootBotGrid::CheckBatteryEmergency() {
 /****************************************/
 /****************************************/
 
+void CFootBotGrid::CheckOperatorRecall() {
+   /* Triệu hồi của operator, ngữ nghĩa "giao nốt rồi mới về":
+    * - đang ôm hộp -> để yên cho giao xong (không bao giờ vứt hàng);
+    *   các cổng nhận việc bên dưới chặn mọi chuyến MỚI, nên giao xong
+    *   AfterTaskDone sẽ tự rơi vào RETURNING -> về dock -> bị ghim.
+    * - đã nhận việc nhưng chưa bốc -> trả việc về bảng đen, về dock.
+    * - đang đậu (IDLE/RESTING) -> đứng yên, cổng nhận việc ghim tại chỗ.
+    * - đang sạc khẩn cấp -> giữ nguyên (điều kiện thả đã bị khoá). */
+   if(m_eOverride != OP_RECALL) return;
+   if(m_sTask.HasBox) return;
+   if(m_eState == STATE_IDLE || m_eState == STATE_RESTING
+      || m_eState == STATE_EMERGENCY_CHARGE
+      || m_eState == STATE_RETURNING) return;
+
+   if(m_sTask.IsValid()) {
+      LF().AbandonTask(m_unId, false);
+      m_sTask.Clear();
+   }
+   m_eState = STATE_RETURNING;
+   if(!RetargetDock(false)) {
+      SetGoal(m_sCurCell);   /* hết dock trống: chờ tại chỗ, RETURNING tự thử lại */
+   }
+}
+
+/****************************************/
+/****************************************/
+
 void CFootBotGrid::RunStateMachine() {
    CheckBatteryEmergency();
+   CheckOperatorRecall();
    const UInt32 unTick = LF().Tick();
 
    switch(m_eState) {
 
       case STATE_IDLE: {
-         if((unTick + m_unId) % 10 == 0
+         if(m_eOverride == OP_AUTO
+            && (unTick + m_unId) % 10 == 0
             && m_fBattery >= m_fLeaveBatt
             && TryClaimBestTask()) {
             m_eState = STATE_TO_PICKUP;
@@ -63,7 +92,8 @@ void CFootBotGrid::RunStateMachine() {
 
       case STATE_RESTING: {
          /* Ngủ đông: quét bảng việc thưa hơn IDLE, vẫn sạc thụ động */
-         if((unTick + m_unId) % 20 == 0
+         if(m_eOverride == OP_AUTO
+            && (unTick + m_unId) % 20 == 0
             && m_fBattery >= m_fLeaveBatt
             && TryClaimBestTask()) {
             m_eState = STATE_TO_PICKUP;
@@ -117,7 +147,8 @@ void CFootBotGrid::RunStateMachine() {
 
       case STATE_RETURNING: {
          /* Trên đường về vẫn nghe ngóng: có việc + đủ pin thì quay xe */
-         if((unTick + m_unId) % 15 == 0
+         if(m_eOverride == OP_AUTO
+            && (unTick + m_unId) % 15 == 0
             && m_fBattery > m_fLowBatt + 0.05
             && TryClaimBestTask()) {
             m_eState = STATE_TO_PICKUP;
@@ -139,11 +170,26 @@ void CFootBotGrid::RunStateMachine() {
             && (m_nTargetDock < 0 || !LF().DockFree(m_nTargetDock, m_unId))) {
             RetargetDock(true);
          }
-         /* Chỉ giải phóng khi ĐANG Ở dock VÀ pin đã hồi >= 70% */
+         /* Chỉ giải phóng khi ĐANG Ở dock VÀ pin đã hồi >= 70%; robot bị
+          * operator triệu hồi thì bị ghim ở đây tới khi được thả */
          if(m_bGoalReached && m_nTargetDock >= 0
             && m_sCurCell == DockCell(m_nTargetDock)
-            && m_fBattery >= m_fLeaveBatt) {
-            m_eState = STATE_IDLE;
+            && m_fBattery >= m_fLeaveBatt
+            && m_eOverride != OP_RECALL) {
+            /* Đang ôm hộp (bỏ dở vì cạn pin): đi giao NỐT — trước đây
+             * nhánh này rơi về IDLE, hộp trên lưng bị bỏ quên và có thể
+             * bị TryClaimBestTask ghi đè (mất hộp + ô kệ bị claim treo
+             * vĩnh viễn). Transition vào DELIVERING duy nhất nằm ở
+             * PICKING nên phải nối lại ở đây. */
+            if(m_sTask.HasBox) {
+               m_eState = STATE_DELIVERING;
+               const CGridLoopFunctions::SDemand& sDem =
+                  LF().GetDemands()[m_sTask.DemandIdx];
+               SetGoal(StackFaceCell(sDem.Cell, m_sTask.FarSide));
+            }
+            else {
+               m_eState = STATE_IDLE;
+            }
          }
          break;
       }

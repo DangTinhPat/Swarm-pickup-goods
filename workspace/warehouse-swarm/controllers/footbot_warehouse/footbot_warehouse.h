@@ -60,6 +60,19 @@ public:
       STATE_DEAD        /* battery empty: bricked in place */
    };
 
+   /* Operator override — the fleet console's authority over one robot.
+    * This is a HUMAN command layer on top of the autonomy (like the
+    * e-stop / recall functions of a real AMR fleet manager), NOT a
+    * central planner: under OP_AUTO (the default, and the only mode a
+    * headless run ever sees) the robot is 100% autonomous. */
+   enum EOverride {
+      OP_AUTO = 0,   /* fully autonomous (default) */
+      OP_STOPPED,    /* e-stop: freeze in place, keep broadcasting so
+                      * neighbors still avoid it; resumes where it left off */
+      OP_RECALL      /* finish the delivery in hand (never abandon a
+                      * parcel), then park at a dock bay and stay there */
+   };
+
    static const UInt32 NUM_BELTS = 3;
    static const UInt32 NUM_ADDRS = 5;
 
@@ -118,6 +131,12 @@ public:
    /* ---- Energy status (also read by the QT user functions for the HUD) ---- */
    bool  IsCharging() const { return m_eState == STATE_CHARGE; }
    bool  IsDead() const { return m_eState == STATE_DEAD; }
+
+   /* ---- Operator console (warehouse_qt_user_functions.cpp) ---- */
+   void      SetOverride(EOverride e_op);
+   EOverride GetOverride() const { return m_eOverride; }
+   EState    GetState() const { return m_eState; }
+   Real      GetCharge() const { return m_fCharge; }
 
 private:
 
@@ -216,6 +235,7 @@ private:
 
    /* State */
    EState m_eState;
+   EOverride m_eOverride;  /* operator command layer, OP_AUTO by default */
    SInt8  m_nCarryAddr;    /* -1 = empty-handed */
    SInt8  m_nBeltChoice;   /* -1 = none */
    UInt8  m_unInbound[NUM_BELTS];  /* neighbors heading to each belt */

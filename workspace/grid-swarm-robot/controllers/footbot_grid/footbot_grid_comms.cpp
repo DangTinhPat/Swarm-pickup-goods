@@ -13,6 +13,10 @@ namespace argos {
 /****************************************/
 
 SGridCell CFootBotGrid::PlannedNextCell() const {
+   /* Bị operator đóng băng: dù lộ trình còn dang dở, với cả đàn robot
+    * này ĐANG ĐỨNG YÊN — phát Next hợp lệ sẽ khiến hàng xóm nhường
+    * đường mãi cho một xe không bao giờ bước tới. */
+   if(m_eOverride == OP_STOPPED) return SGridCell();
    if(m_eTraffic == TRAFFIC_DETOURING && m_unDetourIdx < m_vecDetourPath.size())
       return m_vecDetourPath[m_unDetourIdx];
    if(m_eTraffic == TRAFFIC_YIELDING) return SGridCell();

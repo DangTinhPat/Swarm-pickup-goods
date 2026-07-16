@@ -18,9 +18,10 @@ Hệ thống mô phỏng nhà kho thông minh theo mô hình Amazon Kiva / Geek+
 6. [Mô hình năng lượng (hysteresis 20% / 70%)](#6-mô-hình-năng-lượng-hysteresis-20--70-)
 7. [Kết quả thực nghiệm và benchmark](#7-kết-quả-thực-nghiệm-và-benchmark)
 8. [Build và chạy mô phỏng](#8-build-và-chạy-mô-phỏng)
-9. [Tổ chức mã nguồn theo module](#9-tổ-chức-mã-nguồn-theo-module)
-10. [Tham chiếu tham số tinh chỉnh](#10-tham-chiếu-tham-số-tinh-chỉnh)
-11. [Giới hạn đã biết và lộ trình](#11-giới-hạn-đã-biết-và-lộ-trình)
+9. [Bảng điều khiển vận hành (operator console)](#9-bảng-điều-khiển-vận-hành-operator-console)
+10. [Tổ chức mã nguồn theo module](#10-tổ-chức-mã-nguồn-theo-module)
+11. [Tham chiếu tham số tinh chỉnh](#11-tham-chiếu-tham-số-tinh-chỉnh)
+12. [Giới hạn đã biết và lộ trình](#12-giới-hạn-đã-biết-và-lộ-trình)
 
 ---
 
@@ -302,12 +303,58 @@ argos3 -c experiments/grid_swarm.argos     # mở ở trạng thái tạm dừng
 | 3 ô nền xám ở đáy + tháp hộp ≤ 3 tầng | Băng chuyền + hàng đợi hộp đang trưng bày |
 | 3 khối tường dài phía trên | Dãy kệ — vật cản vật lý thật |
 | Khối màu lơ lửng cạnh kệ | Ô mặt kệ đang yêu cầu hộp màu đó |
-| Nhãn `fb3 87% DELIVERING *` | ID · %pin · trạng thái · `*` = đang dạt làn |
-| LED cam / tím | Đậu dock (IDLE/RESTING) / khẩn cấp pin |
+| Nhãn `fb3 87% DELIVERING *` | ID · %pin · trạng thái · `*` = đang dạt làn (`[STOP]`/`[VE SAC]` = lệnh operator) |
+| LED cam / tím / **trắng** / **cyan** | Đậu dock / khẩn cấp pin / **bị E-STOP (console)** / **bị triệu hồi, đang về dock** |
 
 ---
 
-## 9. Tổ chức mã nguồn theo module
+## 9. Bảng điều khiển vận hành (operator console)
+
+GUI có sẵn một **bảng điều khiển kiểu fleet-manager thật** vẽ đè lên khung nhìn (HUD, góc
+trái trên) — cùng giao diện và phím tắt với dự án chị em
+[`warehouse-swarm`](../warehouse-swarm/README.md#4-bảng-điều-khiển-vận-hành-operator-console).
+Đây là **lớp lệnh của con người** đè lên tự hành (chỉ lật cờ `EOverride` của từng
+controller), **không phải điều phối trung tâm**: dưới chế độ TỰ ĐỘNG robot vẫn tự nhận
+việc, tự A*, tự đặt chỗ 100%. Headless không nạp GUI nên benchmark giữ nguyên.
+
+### 9.1 Lệnh và cách tương tác
+
+| Lệnh | Nút trên HUD | Phím | Tác dụng |
+|---|---|:---:|---|
+| **E-STOP toàn đàn** | `E-STOP` | `X` | Đóng băng tại chỗ; robot **vẫn gia hạn đặt chỗ ô + phát RAB** nên cả đàn né nó như vật cản đứng (A* không lập lộ trình xuyên qua) |
+| **Chạy lại toàn đàn** | `CHẠY LẠI` | `R` | Cả đàn về TỰ ĐỘNG — tiếp tục đúng lộ trình/việc bị đóng băng |
+| **Triệu hồi toàn đàn** | `VỀ SẠC` | `H` | Giao nốt hộp đang ôm (không bao giờ vứt hàng), trả việc chưa bốc về bảng đen, về dock và **ở lại** tới khi được thả |
+| **Kiểm tra trạng thái robot** | `KIỂM TRA TRẠNG THÁI` | `T` | Bật/tắt bảng theo dõi từng robot: chế độ, trạng thái FSM, % pin, hộp đang ôm (ô màu) |
+| **Chọn 1 robot** | — | `Shift+Click` | Chọn robot; hàng nút `DỪNG / VỀ SẠC / TỰ ĐỘNG` (phím `1/2/3`) áp cho đúng robot đó |
+
+Phím camera của ARGoS (`W/A/S/D/Q/E`, chuột kéo) không bị chiếm — console chỉ dùng
+`X/R/H/T/1/2/3`.
+
+### 9.2 Tương tác với MAPF và các bảo chứng an toàn
+
+- **E-STOP an toàn với lưới đặt chỗ:** robot đóng băng vẫn gọi `KeepAliveReservation()`
+  mỗi tick — nếu để đặt chỗ hết hạn, A* của robot khác sẽ coi ô đó là trống và lập lộ
+  trình xuyên qua xác đứng im. Đồng thời nó phát `Next` **không hợp lệ** qua RAB để hàng
+  xóm không nhường đường mãi cho một xe không bao giờ bước tới (họ tự dạt làn quanh nó
+  bằng cơ chế 3-bước sẵn có).
+- **Triệu hồi đi chung ray `RETURNING`:** không hijack trạng thái khẩn cấp pin — robot về
+  dock với mức ưu tiên thường, các cổng nhận việc bị khoá nên tới nơi là bị ghim ở
+  IDLE/RESTING. Robot đang sạc khẩn cấp mà bị triệu hồi thì điều kiện thả (pin ≥ 70%)
+  bị khoá tới khi operator thả.
+- **Sửa kèm một bug có sẵn:** trước đây robot bỏ dở việc đi sạc khẩn cấp **khi đang ôm
+  hộp** sẽ quên luôn hộp sau khi sạc xong (rơi về IDLE — transition vào DELIVERING duy
+  nhất nằm ở PICKING), hộp mất và ô kệ bị claim treo vĩnh viễn. Nay sạc xong nó đi giao
+  nốt. Đã xác minh bằng log: 2 hộp/20 phút được "cứu" trong run chuẩn seed 42 (59 → 60
+  đơn; lệch +1 va chạm là nhiễu giao thông của 2 chuyến đi thêm).
+
+Hiện thực: lớp `EOverride` trong [`footbot_grid_fsm.cpp`](controllers/footbot_grid/footbot_grid_fsm.cpp)
+(`CheckOperatorRecall` + cổng nhận việc) và nhánh e-stop trong
+[`footbot_grid.cpp`](controllers/footbot_grid/footbot_grid.cpp); toàn bộ HUD nằm trong
+[`grid_qt_user_functions.cpp`](loop_functions/grid_loop_functions/grid_qt_user_functions.cpp).
+
+---
+
+## 10. Tổ chức mã nguồn theo module
 
 Mỗi file một nhóm chức năng — không có file "khổng lồ" nào vượt ~250 dòng:
 
@@ -338,7 +385,7 @@ grid-swarm-robot/
 │   ├── grid_energy_safety.cpp           pin định lượng + giám sát khoảng cách
 │   ├── grid_metrics.cpp                 log định kỳ + tổng kết cuối phiên
 │   ├── grid_floor_render.cpp            GetFloorColor — nguồn cảm biến sàn
-│   └── grid_qt_user_functions.{h,cpp}   DrawInWorld (≈ PostDraw): che QR, vẽ 3D
+│   └── grid_qt_user_functions.{h,cpp}   vẽ 3D (che QR, hộp, nhãn) + BẢNG ĐIỀU KHIỂN VẬN HÀNH
 │
 └── experiments/grid_swarm.argos         kịch bản: arena, vật cản, 10 robot, camera
 ```
@@ -347,7 +394,7 @@ grid-swarm-robot/
 
 ---
 
-## 10. Tham chiếu tham số tinh chỉnh
+## 11. Tham chiếu tham số tinh chỉnh
 
 Tất cả nằm trong `experiments/grid_swarm.argos`:
 
@@ -366,7 +413,7 @@ Tất cả nằm trong `experiments/grid_swarm.argos`:
 
 ---
 
-## 11. Giới hạn đã biết và lộ trình
+## 12. Giới hạn đã biết và lộ trình
 
 **Chạm biên thân 0.169–0.170 m.** Ô 0.2 m = thân 0.17 m + biên 3 cm theo đặc tả — hai robot ở hai làn kề (tâm cách đúng 0.2 m) chỉ dư 3 cm. Trong 20 phút ghi nhận 32 sự kiện khoảng cách < 0.17 m, **toàn bộ nằm ở 0.1689–0.170 m** (lún ≤ 1 mm): đây là chạm biên hình học do dung sai chuyển động liên tục (quán tính + làm tròn tick của dynamics2d), *không phải* lỗi logic — bảng đặt chỗ chưa từng cấp một ô cho hai robot. Muốn biên tuyệt đối: tăng `CELL_SIZE` lên 0.22–0.25 m (và đồng bộ `.argos`).
 

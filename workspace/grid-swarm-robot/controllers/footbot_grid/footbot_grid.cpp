@@ -76,6 +76,7 @@ void CFootBotGrid::Reset() {
    m_unRelocCount   = 0;
    m_fBattery       = 1.0;
    m_eState         = STATE_RESTING;
+   m_eOverride      = OP_AUTO;
    m_sTask.Clear();
    m_unActionTimer  = 0;
    m_unIdleTicks    = 0;
@@ -122,10 +123,34 @@ void CFootBotGrid::ControlStep() {
       m_eState = (m_fBattery >= m_fLeaveBatt) ? STATE_IDLE : STATE_RESTING;
    }
 
+   /* E-stop của operator: đóng băng SAU khi đã nghe RAB, nhưng vẫn phải
+    * (1) gia hạn đặt chỗ ô đang đứng — nếu để hết hạn, A* của robot khác
+    * sẽ lập lộ trình xuyên qua xác đứng im này; (2) phát RAB với Next
+    * không hợp lệ (xem PlannedNextCell) để cả đàn coi nó là vật cản đứng
+    * và tự dạt làn quanh nó. FSM/di chuyển tạm treo — thả ra chạy tiếp
+    * đúng chỗ cũ. */
+   if(m_eOverride == OP_STOPPED) {
+      KeepAliveReservation();
+      StopWheels();
+      BroadcastState();
+      m_pcLEDs->SetAllColors(CColor::WHITE);
+      return;
+   }
+
    RunStateMachine();
    StepMovement();
    BroadcastState();
    UpdateLed();
+}
+
+/****************************************/
+/****************************************/
+
+void CFootBotGrid::SetOverride(EOverride e_op) {
+   /* Chỉ đổi cờ; mọi chuyển trạng thái diễn ra ở tick kế trong
+    * CheckOperatorRecall / điều kiện thả của EMERGENCY_CHARGE, nên
+    * lệnh operator không bao giờ cắt ngang giữa một bước lưới. */
+   m_eOverride = e_op;
 }
 
 /****************************************/
@@ -149,7 +174,12 @@ const char* CFootBotGrid::GetStateName() const {
 /****************************************/
 
 void CFootBotGrid::UpdateLed() {
-   if(m_eState == STATE_EMERGENCY_CHARGE)
+   /* Robot bị triệu hồi mà chưa về tới dock: CYAN để operator thấy ngay
+    * ai đang trên đường về (đã đậu thì hiện ORANGE như thường) */
+   if(m_eOverride == OP_RECALL
+      && m_eState != STATE_IDLE && m_eState != STATE_RESTING)
+      m_pcLEDs->SetAllColors(CColor::CYAN);
+   else if(m_eState == STATE_EMERGENCY_CHARGE)
       m_pcLEDs->SetAllColors(CColor::MAGENTA);
    else if(m_eState == STATE_IDLE || m_eState == STATE_RESTING)
       m_pcLEDs->SetAllColors(CColor::ORANGE);

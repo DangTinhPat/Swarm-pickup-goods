@@ -70,6 +70,7 @@ CFootBotWarehouse::CFootBotWarehouse() :
    m_fCharge(1.0),
    m_fBeltSenseRange(1.2),
    m_eState(STATE_IDLE),
+   m_eOverride(OP_AUTO),
    m_nCarryAddr(-1),
    m_nBeltChoice(-1),
    m_unDecisionLockUntil(0),
@@ -166,6 +167,7 @@ void CFootBotWarehouse::Init(TConfigurationNode& t_node) {
 
 void CFootBotWarehouse::Reset() {
    m_eState = STATE_IDLE;
+   m_eOverride = OP_AUTO;
    m_nCarryAddr = -1;
    m_nBeltChoice = -1;
    m_unDecisionLockUntil = 0;
@@ -184,6 +186,25 @@ void CFootBotWarehouse::Reset() {
    }
    m_pcLEDs->SetAllColors(CColor::GREEN);
    m_pcRABAct->ClearData();
+}
+
+/****************************************/
+/****************************************/
+
+void CFootBotWarehouse::SetOverride(EOverride e_op) {
+   if(m_eOverride == e_op) return;
+   m_eOverride = e_op;
+   if(e_op == OP_RECALL) {
+      /* Abandon any fetch trip immediately (a held parcel is still
+       * delivered first — ControlStep never diverts STATE_DELIVER) */
+      m_nBeltChoice = -1;
+   }
+   else if(e_op == OP_AUTO) {
+      /* Back to work without waiting out the decision lock */
+      m_unDecisionLockUntil = 0;
+   }
+   /* OP_STOPPED keeps everything (including m_nBeltChoice) untouched so
+    * a resumed robot continues exactly where it was frozen. */
 }
 
 /****************************************/
@@ -209,13 +230,30 @@ void CFootBotWarehouse::ControlStep() {
    for(UInt32 i = 0; i < NUM_BELTS; ++i) m_unInbound[i] = 0;
    ProcessMessages();
 
+   /* Operator e-stop: freeze in place AFTER listening (gossip and dock
+    * bookkeeping stay fresh) and keep broadcasting so neighbors treat the
+    * frozen body as something to steer around. Everything else — energy
+    * transitions, bidding, rescue — is suspended until the operator
+    * resumes; the robot then continues exactly where it left off. */
+   if(m_eOverride == OP_STOPPED) {
+      m_pcWheels->SetLinearVelocity(0.0, 0.0);
+      m_pcLEDs->SetAllColors(CColor::ORANGE);
+      Broadcast();
+      return;
+   }
+
    /* Energy policy: a flat threshold (the battery is large relative to the
     * facility, so no per-trip distance prediction is needed). A carrying
-    * robot is never diverted to charge. */
+    * robot is never diverted to charge. An operator RECALL rides the same
+    * path: it forces the robot into STATE_CHARGE (head to a bay) and holds
+    * it there past resume_charge until the operator releases it. */
    if(m_eState == STATE_CHARGE) {
-      if(m_fCharge >= m_fResumeCharge) m_eState = STATE_IDLE;
+      if(m_eOverride != OP_RECALL && m_fCharge >= m_fResumeCharge) {
+         m_eState = STATE_IDLE;
+      }
    }
-   else if(m_eState != STATE_DELIVER && m_fCharge < m_fHardChargeThreshold) {
+   else if(m_eState != STATE_DELIVER &&
+           (m_fCharge < m_fHardChargeThreshold || m_eOverride == OP_RECALL)) {
       m_eState = STATE_CHARGE;
       m_nBeltChoice = -1;
    }

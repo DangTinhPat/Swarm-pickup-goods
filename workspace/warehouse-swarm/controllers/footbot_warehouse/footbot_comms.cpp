@@ -172,7 +172,10 @@ void CFootBotWarehouse::Broadcast() {
    CByteArray cData;
    cData << (UInt8)m_eState;
    cData << m_unRobotId;
-   if(m_eState == STATE_TO_BELT && m_nBeltChoice >= 0) {
+   /* A frozen (operator-stopped) robot must not keep claiming its belt:
+    * neighbors count inbound claimers when bidding, and a claim from a
+    * robot that is not actually moving would deter them from real work. */
+   if(m_eState == STATE_TO_BELT && m_nBeltChoice >= 0 && m_eOverride == OP_AUTO) {
       cData << (UInt8)m_nBeltChoice;
       Real fDist = (m_cBelt[m_nBeltChoice] - m_cPos).Length();
       cData << (UInt8)Min<Real>(fDist / 0.04, 255.0);

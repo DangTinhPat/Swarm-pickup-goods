@@ -60,6 +60,17 @@ public:
       TRAFFIC_YIELDING         /* hai phía đều nghẽn: đứng im 1-2 tick    */
    };
 
+   /** Lớp lệnh của NGƯỜI VẬN HÀNH (bảng điều khiển trên GUI) đè lên tự
+    * hành — như e-stop/recall của fleet-manager thật, KHÔNG phải điều
+    * phối trung tâm: dưới OP_AUTO (mặc định, headless chỉ có chế độ này)
+    * robot tự hành 100%. */
+   enum EOverride : UInt8 {
+      OP_AUTO = 0,   /* tự hành hoàn toàn                                 */
+      OP_STOPPED,    /* e-stop: đóng băng tại chỗ nhưng VẪN gia hạn đặt
+                      * chỗ ô + phát RAB để cả đàn né như vật cản đứng    */
+      OP_RECALL      /* giao nốt hộp đang ôm rồi về dock và Ở LẠI đó      */
+   };
+
    /** Nhiệm vụ: cặp (hộp trên băng chuyền, ô kệ cần đúng màu đó). */
    struct STask {
       SInt32 ConveyorIdx = -1;
@@ -108,11 +119,16 @@ public:
    const SGridCell& GetCurCell()  const { return m_sCurCell; }
    const std::vector<SGridCell>& GetPath() const { return m_vecPath; }
 
+   /* --- Bảng điều khiển vận hành (grid_qt_user_functions.cpp) --- */
+   void      SetOverride(EOverride e_op);
+   EOverride GetOverride() const { return m_eOverride; }
+
 private:
 
    /* footbot_grid_fsm.cpp */
    void RunStateMachine();
    void CheckBatteryEmergency();
+   void CheckOperatorRecall();
    bool TryClaimBestTask();
    void AfterTaskDone();
    bool RetargetDock(bool b_must_find);
@@ -193,6 +209,7 @@ private:
 
    /* --- Nhiệm vụ / FSM --- */
    EState m_eState = STATE_RESTING;
+   EOverride m_eOverride = OP_AUTO;   /* lệnh operator, xem enum trên */
    STask  m_sTask;
    UInt32 m_unActionTimer = 0;
    UInt32 m_unIdleTicks   = 0;

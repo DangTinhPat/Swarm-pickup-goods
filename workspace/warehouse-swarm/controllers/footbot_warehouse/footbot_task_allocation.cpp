@@ -51,7 +51,8 @@ void CFootBotWarehouse::Deliver() {
 /****************************************/
 
 bool CFootBotWarehouse::WantsWork() const {
-   return m_eState != STATE_CHARGE && m_eState != STATE_DEAD &&
+   return m_eOverride == OP_AUTO &&
+          m_eState != STATE_CHARGE && m_eState != STATE_DEAD &&
           m_fCharge >= KEEP_WORKING_CHARGE;
 }
 
