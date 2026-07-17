@@ -5,6 +5,7 @@
  */
 #include "footbot_warehouse.h"
 #include <argos3/core/utility/configuration/argos_configuration.h>
+#include <argos3/core/utility/logging/argos_log.h>
 #include <functional>
 
 /****************************************/
@@ -115,6 +116,18 @@ void CFootBotWarehouse::Init(TConfigurationNode& t_node) {
    GetNodeAttributeOrDefault(tEnergy, "resume_charge", m_fResumeCharge, m_fResumeCharge);
    GetNodeAttributeOrDefault(tEnergy, "min_work_charge", m_fMinWorkCharge, m_fMinWorkCharge);
    GetNodeAttributeOrDefault(tEnergy, "hard_charge_threshold", m_fHardChargeThreshold, m_fHardChargeThreshold);
+   /* Guard against re-introducing a known misconfiguration: a high
+    * min_work_charge is a fleet-wide WORK BAN below that level — every
+    * robot under it refuses new jobs and camps at the dock while parcels
+    * pile up. The 70% figure belongs to resume_charge (charge-cycle
+    * hysteresis) only. */
+   if(m_fMinWorkCharge > 0.5) {
+      LOGERR << "[fwc] CANH BAO CAU HINH: min_work_charge="
+             << m_fMinWorkCharge << " qua cao — robot duoi muc nay se TU"
+             << " CHOI nhan viec va ve dock du con hang. Nguong nay chi la"
+             << " muc an toan nho de nhan viec MOI (khuyen nghi 0.25-0.35);"
+             << " nguong 70% thuoc ve resume_charge." << std::endl;
+   }
 
    /* Facility layout: belt bins, address zones, depot */
    TConfigurationNode& tSt = GetNode(t_node, "stations");

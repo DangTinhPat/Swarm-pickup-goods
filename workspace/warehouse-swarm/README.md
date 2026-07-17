@@ -261,10 +261,22 @@ Pin dùng entity pin của ARGoS làm **kho lưu trữ**, còn việc **xả pin
 loop functions** (theo quãng đường + hao nền mỗi tick) — xem hộp cảnh báo bên dưới về lý
 do. Chính sách **ngưỡng cứng**, không dự đoán khoảng cách:
 
-- Pin **< 10%** (và tay không) → về sạc; **≥ 70%** mới được rời trạm đi làm.
+- Pin **< 10%** (và tay không) → buộc về sạc; đã vào chu kỳ sạc thì **≥ 70%** mới được
+  rời trạm (`resume_charge` — hysteresis của riêng chu kỳ sạc).
+- **Nhận việc MỚI** chỉ cần pin ≥ **30%** (`min_work_charge`), việc đang dở giữ tới sàn
+  25% — robot làm việc liên tục suốt dải 30–100%, không có "dải cấm việc".
 - **Sạc cơ hội:** robot rảnh chờ ở dock vẫn được nạp, không cần đợi tới ngưỡng khẩn.
 - **Warm-up 5 s** khi vào ô (bắt tay) — có kẹp sàn bảo vệ 1% để robot không chết mid-handshake.
 - **Ưu tiên đường** cao nhất cho robot đi sạc; pin khởi đầu ngẫu nhiên 55–95% để so le chu kỳ sạc.
+
+> #### ⚠️ Không đặt `min_work_charge` = `resume_charge` (70%)
+>
+> Đây là lỗi cấu hình từng xảy ra: ngưỡng 70% vốn chỉ dành cho **rời trạm sau chu kỳ
+> sạc** bị nhân đôi sang **ngưỡng nhận việc mới**, biến nó thành lệnh **cấm làm việc
+> toàn cục dưới 70%** — robot giao xong một kiện, tụt dưới 70%, lập tức từ chối mọi việc
+> và về dock ngồi sạc dù hàng chất đống (pin khởi tạo 55–95% nên ~nửa đàn ngồi ì ngay từ
+> đầu; dấu vết trong mọi benchmark cũ: "pin thấp nhất" không bao giờ dưới ~55%). Controller
+> giờ **cảnh báo to lúc khởi động** nếu `min_work_charge > 0.5` để lỗi này không tái diễn.
 
 > #### ⚠️ Không dùng `discharge_model="time_motion"` — nó sinh NaN
 >
@@ -372,7 +384,8 @@ Tất cả trong [`experiments/warehouse.argos`](experiments/warehouse.argos).
 |---|---|---|
 | `<battery> full_charge`/`start_charge` | 6.0 | Dung lượng ×6 mặc định ARGoS; `discharge_model="time" delta=0` (không dùng model nội bộ — xem §6.6) |
 | `drain_move`/`drain_time` (warehouse) | 0.008 / 2e-5 | Xả pin tự tính: theo mét đi / theo tick (thay cho `pos_factor`/`time_factor` cũ) |
-| `<energy> resume_charge`/`min_work_charge` | 0.70 / 0.70 | Sạc tới ≥70% mới rời trạm / nhận việc mới |
+| `<energy> resume_charge` | 0.70 | Đã vào chu kỳ sạc thì sạc tới ≥70% mới rời trạm (hysteresis của riêng chu kỳ sạc) |
+| `<energy> min_work_charge` | 0.30 | Mức an toàn nhỏ để nhận việc MỚI — **không đặt cao** (>0.5 sẽ bị cảnh báo lúc khởi động, xem §6.6) |
 | `<energy> hard_charge_threshold` | 0.10 | Pin < 10% buộc về sạc (việc đang dở giữ tới sàn 25%) |
 | `charge_rate` / `charge_warmup` | 0.002667 / 50 | Tốc độ nạp mỗi tick / số tick bắt tay trước khi có điện |
 | `stigmergy_decay` / `stigmergy_gain` | 0.998 / 1.0 | Tốc độ phai vệt sàn / lượng cộng khi có robot mới đỗ |

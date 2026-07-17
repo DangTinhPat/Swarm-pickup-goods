@@ -47,12 +47,18 @@
                   pillar3="2,-2" pillar4="-2,-2"
                   pillar_radius="0.075" pillar_range="0.8" />
         <!-- Energy policy: flat thresholds, no distance prediction.
-             hard_charge_threshold: go charge only when below this (the
-             fleet's battery is large relative to the 8x8 m facility, so
-             a flat late trigger is safe without estimating trip cost).
-             resume_charge / min_work_charge: must recharge back up to
-             this level before leaving the bay / accepting a new job. -->
-        <energy resume_charge="0.70" min_work_charge="0.70"
+             hard_charge_threshold: forced charge only below this (the
+             battery is large relative to the 8x8 m facility, one trip
+             costs ~1-2%, so a flat late trigger is safe).
+             resume_charge: a robot that ENTERED a charge cycle stays on
+             the bay until this level — hysteresis of the charge cycle
+             ONLY, it must never gate ordinary work.
+             min_work_charge: small safety bar to accept a NEW job.
+             WARNING: setting min_work_charge high (e.g. =resume_charge)
+             makes every robot below that level refuse work and camp at
+             the dock while parcels pile up — the controller logs an
+             error at startup if it is set above 0.5. -->
+        <energy resume_charge="0.70" min_work_charge="0.30"
                 hard_charge_threshold="0.10" />
       </params>
     </footbot_warehouse_controller>
