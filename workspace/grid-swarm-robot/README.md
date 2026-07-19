@@ -6,6 +6,9 @@
 
 Hệ thống mô phỏng nhà kho thông minh theo mô hình Amazon Kiva / Geek+: 10 robot vi sai tự định vị bằng "camera gầm đọc mã QR sàn", tự nhận đơn, tự đặt chỗ ô lưới theo từng tick và tự đàm phán nhường đường qua sóng cục bộ — **không tồn tại máy chủ điều phối trung tâm**.
 
+> 🎬 **Video demo:** [xem hệ thống vận hành trên lưới](../../demo/warehouse_grid_space.mp4)
+> *(mp4 · 5 MB — GitHub phát trực tiếp trong trình duyệt)*
+
 ---
 
 ## 📋 Mục lục

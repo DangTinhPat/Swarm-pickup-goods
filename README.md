@@ -36,10 +36,12 @@ cục bộ mà mỗi robot cùng chạy.
 Cả hai đều mô phỏng kho hàng kiểu Amazon/Kiva với 10 robot foot-bot phi tập trung, nhưng
 đại diện cho **hai trường phái điều hướng khác nhau** — tiện để so sánh trực tiếp:
 
-| Dự án | Mô hình điều hướng | Điểm nhấn | Tài liệu |
-|---|---|---|---|
-| 🟦 **Grid Swarm Robot** | **Lưới rời rạc + MAPF** (đặt chỗ không-thời gian) | Robot tự định vị bằng "camera gầm đọc mã QR sàn", đặt chỗ ô lưới theo từng tick, đàm phán nhường đường cục bộ; phân loại hàng theo màu | [→ `workspace/grid-swarm-robot/`](workspace/grid-swarm-robot/README.md) |
-| 🟩 **Warehouse Swarm** | **Trường thế liên tục** (potential field) | Đấu giá thị trường chống lưỡng lự, tin đồn cục bộ (gossip) thay oracle toàn tri, stigmergy né đông bãi đỗ, quản lý pin | [→ `workspace/warehouse-swarm/`](workspace/warehouse-swarm/README.md) |
+| Dự án | Mô hình điều hướng | Điểm nhấn | Demo | Tài liệu |
+|---|---|---|---|---|
+| 🟦 **Grid Swarm Robot** | **Lưới rời rạc + MAPF** (đặt chỗ không-thời gian) | Robot tự định vị bằng "camera gầm đọc mã QR sàn", đặt chỗ ô lưới theo từng tick, đàm phán nhường đường cục bộ; phân loại hàng theo màu | [🎬 video](demo/warehouse_grid_space.mp4) | [→ `workspace/grid-swarm-robot/`](workspace/grid-swarm-robot/README.md) |
+| 🟩 **Warehouse Swarm** | **Trường thế liên tục** (potential field) | Đấu giá thị trường chống lưỡng lự, tin đồn cục bộ (gossip) thay oracle toàn tri, stigmergy né đông bãi đỗ, quản lý pin | [🎬 video](demo/warehouse_free_space.mp4) | [→ `workspace/warehouse-swarm/`](workspace/warehouse-swarm/README.md) |
+
+> 🎬 Video demo phát trực tiếp trên GitHub — bấm link ở cột **Demo** (mp4, 5–8 MB).
 
 > Mỗi dự án có README riêng rất chi tiết (thuật toán, sơ đồ, bảng benchmark, tham số). Bấm
 > vào cột **Tài liệu** để đọc.
@@ -160,6 +162,7 @@ Swam-pickup-goods/
 ├── run.sh                  # launcher tiện dụng
 ├── .env                    # UID/GID host
 ├── .devcontainer/          # cấu hình VS Code Dev Containers (tuỳ chọn)
+├── demo/                   # video demo của hai dự án (mp4)
 └── workspace/              # ── TOÀN BỘ MÃ NGUỒN (mount vào container) ──
     ├── argos3/             # ARGoS3 core vendored (build sẵn, ít khi sửa)
     ├── grid-swarm-robot/   # 🟦 Dự án 1 — điều hướng lưới + MAPF

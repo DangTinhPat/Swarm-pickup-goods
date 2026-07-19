@@ -9,6 +9,9 @@
 bảng điều khiển vận hành
 </p>
 
+> 🎬 **Video demo:** [xem đội robot vận hành](../../demo/warehouse_free_space.mp4)
+> *(mp4 · 8 MB — GitHub phát trực tiếp trong trình duyệt)*
+
 ---
 
 ## Mục lục
