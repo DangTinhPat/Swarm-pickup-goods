@@ -2,7 +2,7 @@
 
 **Mô phỏng hệ thống Swarm AMR phân loại hàng theo màu trên lưới rời rạc — điều phối phi tập trung, ARGoS3 / C++17**
 
-`ARGoS 3` · `C++17` · `10 × foot-bot` · `lưới 30×30 @ 0.2 m` · `MAPF đặt chỗ không-thời gian` · `0 va chạm thực`
+`ARGoS 3` · `C++17` · `10 × foot-bot` · `lưới 30×30 @ 0.2 m` · `MAPF đặt chỗ không-thời gian` · `0 xuyên thân` (xem [§12](#12-giới-hạn-đã-biết-và-lộ-trình))
 
 Hệ thống mô phỏng nhà kho thông minh theo mô hình Amazon Kiva / Geek+: 10 robot vi sai tự định vị bằng "camera gầm đọc mã QR sàn", tự nhận đơn, tự đặt chỗ ô lưới theo từng tick và tự đàm phán nhường đường qua sóng cục bộ — **không tồn tại máy chủ điều phối trung tâm**.
 
@@ -15,7 +15,7 @@ Hệ thống mô phỏng nhà kho thông minh theo mô hình Amazon Kiva / Geek+
 3. [Bản đồ và hệ tọa độ lưới](#3-bản-đồ-và-hệ-tọa-độ-lưới)
 4. [Ngăn xếp thuật toán: định vị, MAPF, nhường đường](#4-ngăn-xếp-thuật-toán-định-vị-mapf-nhường-đường)
 5. [Máy trạng thái nhiệm vụ](#5-máy-trạng-thái-nhiệm-vụ)
-6. [Mô hình năng lượng (hysteresis 20% / 70%)](#6-mô-hình-năng-lượng-hysteresis-20--70-)
+6. [Mô hình năng lượng (hysteresis 20/70)](#6-mô-hình-năng-lượng-hysteresis-2070)
 7. [Kết quả thực nghiệm và benchmark](#7-kết-quả-thực-nghiệm-và-benchmark)
 8. [Build và chạy mô phỏng](#8-build-và-chạy-mô-phỏng)
 9. [Bảng điều khiển vận hành (operator console)](#9-bảng-điều-khiển-vận-hành-operator-console)
@@ -225,7 +225,7 @@ stateDiagram-v2
 
 ---
 
-## 6. Mô hình năng lượng (hysteresis 20 % / 70 %)
+## 6. Mô hình năng lượng (hysteresis 20/70)
 
 ```text
  pin %
@@ -281,8 +281,8 @@ argos3 -c /tmp/gs.argos 2>&1 | grep -E "Delivered total|Emergencies|VA CHAM|dat 
 ## 8. Build và chạy mô phỏng
 
 ```bash
-# 1. Mở container ARGoS (host)
-cd /home/dvt/argos && ./run.sh
+# 1. Mở container ARGoS — chạy từ thư mục gốc repo
+./run.sh
 
 # 2. Build (trong container, lần đầu)
 cd ~/workspace/grid-swarm-robot
@@ -341,11 +341,11 @@ Phím camera của ARGoS (`W/A/S/D/Q/E`, chuột kéo) không bị chiếm — c
   dock với mức ưu tiên thường, các cổng nhận việc bị khoá nên tới nơi là bị ghim ở
   IDLE/RESTING. Robot đang sạc khẩn cấp mà bị triệu hồi thì điều kiện thả (pin ≥ 70%)
   bị khoá tới khi operator thả.
-- **Sửa kèm một bug có sẵn:** trước đây robot bỏ dở việc đi sạc khẩn cấp **khi đang ôm
-  hộp** sẽ quên luôn hộp sau khi sạc xong (rơi về IDLE — transition vào DELIVERING duy
-  nhất nằm ở PICKING), hộp mất và ô kệ bị claim treo vĩnh viễn. Nay sạc xong nó đi giao
-  nốt. Đã xác minh bằng log: 2 hộp/20 phút được "cứu" trong run chuẩn seed 42 (59 → 60
-  đơn; lệch +1 va chạm là nhiễu giao thông của 2 chuyến đi thêm).
+- **Không mất hàng qua chu kỳ sạc:** robot buộc phải bỏ dở việc đi sạc khẩn cấp **khi
+  đang ôm hộp** sẽ **giao nốt hộp** ngay sau khi hồi pin (nối lại transition
+  EMERGENCY_CHARGE → DELIVERING) — hộp không bao giờ bị bỏ quên trên lưng và ô kệ không
+  bị claim treo vĩnh viễn. Bảo chứng này áp dụng chung cho cả sạc khẩn cấp lẫn triệu hồi
+  của operator.
 
 Hiện thực: lớp `EOverride` trong [`footbot_grid_fsm.cpp`](controllers/footbot_grid/footbot_grid_fsm.cpp)
 (`CheckOperatorRecall` + cổng nhận việc) và nhánh e-stop trong

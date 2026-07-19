@@ -54,9 +54,9 @@ Kho code chia làm **hai domain tách bạch** — đây là điểm cốt lõi 
 ### 🐳 Domain 1 — Môi trường (Docker container)
 
 Container đóng vai trò như một **"venv cho C++"**: chứa toolchain + ARGoS3 cài system-wide
-(`/usr/local`), **không** chứa code của bạn. Dựng lại y hệt trên bất kỳ máy nào bằng một
-lệnh build. GUI (Qt/OpenGL) render thẳng lên màn hình host qua X11 + GPU thật (đã xác nhận
-`GL_RENDERER = RENOIR`, không phải software rendering).
+(`/usr/local`), **không** chứa mã nguồn dự án. Dựng lại y hệt trên bất kỳ máy nào bằng một
+lệnh build. GUI (Qt/OpenGL) render thẳng lên màn hình host qua X11, có tăng tốc GPU khi
+host cấp `/dev/dri` (tự rơi về software rendering nếu không).
 
 ### 💻 Domain 2 — Mã nguồn (host `workspace/`)
 
@@ -174,9 +174,10 @@ Swam-pickup-goods/
   khác, kiểm tra `getent group video render` và sửa `docker-compose.yml`.
 - **network_mode: host:** dùng host networking để X11 và các giao thức multi-process của
   ARGoS hoạt động không cần map port thủ công.
-- **ARGoS core vendored:** đóng kèm trong repo để build offline. Nếu `src/core/` từng bị
-  thiếu do `.gitignore` (một `core` pattern cũ vô tình loại cả thư mục nguồn `core/`), điều
-  đó đã được sửa — thư mục nguồn ARGoS giờ được track đầy đủ.
+- **ARGoS core vendored:** toàn bộ nguồn ARGoS3 được track trong repo để `docker compose
+  build` chạy offline, không phụ thuộc upstream. Lưu ý khi sửa `.gitignore`: tránh các
+  pattern trần như `core` (dành cho core-dump) vì chúng khớp luôn thư mục nguồn
+  `src/core/` của ARGoS.
 - Chi tiết build ARGoS core, X11, và các cờ CMake nằm trong comment của
   [`Dockerfile`](Dockerfile) và [`entrypoint.sh`](entrypoint.sh).
 
